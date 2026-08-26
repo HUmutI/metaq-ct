@@ -30,7 +30,7 @@ literature. This file only changes what the joint model is trained on.
 from __future__ import annotations
 import argparse, csv, json, os, sys
 
-sys.path.insert(0, "/home/ch278233/arc-ct")
+sys.path.insert(0, "/home/ch278233/bch-arc-ct")
 os.environ.setdefault("RAC_SCHEMA", "peds")
 from arcct.schema import PEDS_PATHOLOGIES as P27, CTRATE_PATHOLOGIES as P18
 

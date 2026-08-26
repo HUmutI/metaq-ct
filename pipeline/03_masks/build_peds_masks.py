@@ -33,7 +33,7 @@ from scipy import ndimage
 # while the background sat at -528 - the mask was more air-like outside the lung
 # than inside it. Volumes at or above 240 looked fine, which is why an
 # adult-sized check would never have caught it.
-sys.path.insert(0, "/home/ch278233/arc-ct")
+sys.path.insert(0, "/home/ch278233/bch-arc-ct")
 from arcct.dataset import _pad_crop_hwd as _ct_pad_crop
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

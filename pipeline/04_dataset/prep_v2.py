@@ -103,7 +103,7 @@ def main() -> int:
     print("\n[gate] gercek veri yolu denemesi")
     try:
         import numpy as np
-        sys.path.insert(0, "/home/ch278233/arc-ct")
+        sys.path.insert(0, "/home/ch278233/bch-arc-ct")
         os.environ.setdefault("RAC_SCHEMA", "peds")
         from arcct.dataset import RACDatasetV4
         ds = RACDatasetV4(

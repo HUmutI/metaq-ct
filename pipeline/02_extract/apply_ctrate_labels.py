@@ -22,7 +22,7 @@ from __future__ import annotations
 import argparse, csv, glob, json, os, sys
 from collections import Counter
 
-sys.path.insert(0, "/home/ch278233/arc-ct")
+sys.path.insert(0, "/home/ch278233/bch-arc-ct")
 os.environ.setdefault("RAC_SCHEMA", "peds")
 from arcct.schema import PEDS_PATHOLOGIES
 

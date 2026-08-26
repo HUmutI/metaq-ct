@@ -37,7 +37,12 @@ case "${SET:?SET gerekli}" in
     # adult reproducibility gate stays a like-for-like measurement.
     export RAC_DATA_ROOT=/temp_work/ch278233/EVAL_CTRATE
     export RAC_LABELS_VALID=/temp_work/ch278233/CTRATE_VALID_labels27_full.csv
-    export RAC_MASK_VALID=/nonexistent ;;
+    # Masks now exist for CT-RATE validation (3,000 of 3,002 volumes), so the
+    # routed metric finally measures something on adults. Until they were
+    # generated, r_auc silently equalled g_auc here -- the routed column was
+    # reporting the mask-free number, which read as "no routing penalty in
+    # adults" when in fact no routing had happened.
+    export RAC_MASK_VALID=${CTMASK:-/temp_work/ch278233/CTRATE_MASKS10_192/valid_nested} ;;
   combined)
     export RAC_DATA_ROOT=/temp_work/ch278233/EVAL_COMBINED
     # LBL lets one model be scored against both label sets. Which set a model
