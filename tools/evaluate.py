@@ -148,13 +148,59 @@ def build_model_for_eval(ckpt_path):
             if n_queries != QFORMER_NUM_QUERIES:
                 print(f"[eval] Q-Former query count from ckpt: {n_queries} "
                       f"(env default was {QFORMER_NUM_QUERIES})")
-        if want_anatomy:
+        # A context checkpoint carries its own layout and its own modules. Detect
+        # it explicitly and refuse to guess: the legacy arithmetic below reads
+        # num_global = n_queries - 10 - 27, which on a 40-row context bank gives
+        # 3. Every shape then matches, load_state_dict(strict=False) succeeds,
+        # and a completely different model is evaluated with no error at all.
+        ctx_layout = (pkg.get("config") or {}).get("query_layout")
+        ctx_keys = [k for k in (qf_state or {})
+                    if k.split(".")[0] in ("fusion", "conditioner", "relevance", "context")]
+        if ctx_layout or ctx_keys:
+            from arcct.context_qformer import ContextQFormer      # noqa: PLC0415
+            from arcct.slots import CtxConfig, SlotLayout          # noqa: PLC0415
+            if not ctx_layout:
+                raise RuntimeError(
+                    "the checkpoint holds context modules (%s) but no "
+                    "config['query_layout']; refusing to infer the slot layout"
+                    % ", ".join(sorted({k.split('.')[0] for k in ctx_keys})))
+            anatomy_labels = list(range(1, ctx_layout["n_anatomy"] + 1))
+            pathology_labels = [PATHOLOGY_FINE_ORGANS[name] for name in PATHOLOGIES]
+            if len(pathology_labels) != ctx_layout["n_path"]:
+                raise RuntimeError(
+                    f"checkpoint was trained on {ctx_layout['n_path']} pathologies, "
+                    f"RAC_SCHEMA gives {len(pathology_labels)}")
+            layout = SlotLayout(
+                n_anatomy=ctx_layout["n_anatomy"], n_path=ctx_layout["n_path"],
+                n_glob_gen=ctx_layout["n_glob_gen"],
+                n_glob_clin=ctx_layout["n_glob_clin"],
+                n_path_cond=ctx_layout["n_path_cond"])
+            layout.validate()
+            print(f"[eval] context Q-Former: {layout.describe()}")
+            qformer_module = ContextQFormer(
+                anatomy_labels=anatomy_labels,
+                pathology_labels=pathology_labels,
+                layout=layout, cfg=CtxConfig.from_env(),
+                dim=QFORMER_DIM, depth=QFORMER_DEPTH, num_heads=QFORMER_HEADS,
+                image_dim=RACImageEncoder.FEAT_DIM,
+            )
+        elif want_anatomy:
             anatomy_labels = list(range(1, 11))
             pathology_labels = [PATHOLOGY_FINE_ORGANS[name] for name in PATHOLOGIES]
+            num_global = n_queries - len(anatomy_labels) - len(pathology_labels)
+            # An implausible global count means the checkpoint's schema is not
+            # the one in force. Raise instead of building a bank that loads
+            # cleanly and means something else.
+            if not 1 <= num_global <= 4:
+                raise RuntimeError(
+                    f"{n_queries} query rows over {len(anatomy_labels)} anatomy + "
+                    f"{len(pathology_labels)} pathology leaves num_global="
+                    f"{num_global}; the checkpoint's schema is not RAC_SCHEMA="
+                    f"{os.environ.get('RAC_SCHEMA', '<unset>')}")
             qformer_module = AnatomyQFormer(
                 anatomy_labels=anatomy_labels,
                 pathology_labels=pathology_labels,
-                num_global=n_queries - len(anatomy_labels) - len(pathology_labels),
+                num_global=num_global,
                 dim=QFORMER_DIM,
                 depth=QFORMER_DEPTH,
                 num_heads=QFORMER_HEADS,
