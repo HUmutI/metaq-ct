@@ -32,7 +32,10 @@ def build_role_mask(
     anatomy_labels: list[int],
     pathology_labels: list[list[int]],
     num_global: int = 4,
-) -> torch.Tensor:
+    *,
+    row_index: torch.Tensor | None = None,
+    return_stats: bool = False,
+):
     """Construct ``(B, Q, N)`` boolean mask.
 
     Args
@@ -43,6 +46,15 @@ def build_role_mask(
     pathology_labels : list of lists; each inner list is the anatomies a
         single pathology query may attend to (length P).
     num_global : number of unrestricted "global" queries to append.
+    row_index : optional LongTensor of rows to gather after the mask is built,
+        so a wider bank can reuse a row (the conditioned pathology slots take
+        the same organ union as their weight-tied partners). Keyword-only, and
+        applied last, so the statistics below are still reported once per
+        distinct region rather than once per slot.
+    return_stats : when True, return ``(mask, stats)`` with ``stats["rho"]`` the
+        fraction of the feature grid each query may attend to and
+        ``stats["empty"]`` a per-sample flag for regions that never reached the
+        grid at all.
 
     Returns
     -------
@@ -85,19 +97,40 @@ def build_role_mask(
     # Global queries: unrestricted.
     out[:, A + P:] = True
 
+    # Routing density and the empty-region flag are computed BEFORE the override
+    # below, and that ordering is the whole point. After the override an empty
+    # region has every key allowed, so it reports rho = 1.0 -- the most tightly
+    # routed case would read as the least routed one, exactly inverted.
+    n_allowed = out.sum(dim=-1)                            # (B, Q)
+    rho = n_allowed.to(torch.float32) / float(N)           # (B, Q)
+    empty = n_allowed.eq(0)                                # (B, Q)
+
     # Safety: a query whose region is entirely empty in this volume would
     # have NO attendable keys, which makes nn.MultiheadAttention return NaN.
     # In that case, unrestrict the query so attention falls back to the
     # whole volume.
-    any_key = out.any(dim=-1, keepdim=True)                # (B, Q, 1)
+    #
     # A region with no voxels on the feature grid does not fail here - it is
     # turned into an unrestricted query, so the model keeps running and that
     # query quietly stops being an anatomy query. Measured over 8816 pediatric
     # volumes: right middle lobe reaches the grid in 89.9% of cases, central
     # airway 96.8%, upper abdomen 96.9%. Record it so the training log can say
     # how often anatomy routing was actually in force.
-    build_role_mask.last_empty = (~any_key.squeeze(-1)).float().mean(dim=0)  # (Q,)
-    out = torch.where(any_key, out, torch.ones_like(out))
+    #
+    # last_empty is a function attribute overwritten by every call, so what a
+    # caller reads is the most recent batch and nothing else. It is kept for
+    # backward compatibility with the existing training log; anything that needs
+    # a real rate should accumulate the returned stats instead.
+    build_role_mask.last_empty = empty.float().mean(dim=0)  # (Q,)
+    build_role_mask.last_rho = rho.mean(dim=0)              # (Q,)
+    out = torch.where(empty.unsqueeze(-1), torch.ones_like(out), out)
+
+    if row_index is not None:
+        out = out.index_select(1, row_index)
+        rho = rho.index_select(1, row_index)
+        empty = empty.index_select(1, row_index)
+    if return_stats:
+        return out, {"rho": rho, "empty": empty}
     return out
 
 

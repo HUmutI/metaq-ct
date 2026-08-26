@@ -48,6 +48,8 @@ class QFormerBlock(nn.Module):
         cross_attn_mask: torch.Tensor | None = None,
         key_padding_mask: torch.Tensor | None = None,
         return_attn: bool = False,
+        self_attn_split: int | None = None,
+        self_attn_mask: torch.Tensor | None = None,
     ):
         """One block forward.
 
@@ -62,9 +64,36 @@ class QFormerBlock(nn.Module):
             "ignore this key". Not used in normal flow.
         return_attn : when True, also return the per-head cross-attn weights
             (B, num_heads, Q, N). Used for attention-supervision loss.
+        self_attn_split : index of the first conditioned slot. Queries below it
+            may attend only to each other; queries at or above it may attend to
+            everything. Used by the context bank to keep ``Z_gen`` provably free
+            of the indication (leak path 1). ``None`` restores the plain path.
+        self_attn_mask : alternative to ``self_attn_split`` -- a ``(Q, Q)`` bool
+            mask where True means "forbidden". Kept as a cross-check of the split
+            path; the two must agree.
+
+        Both new arguments default to None, so an unconditioned bank takes the
+        same branch, with the same tensor shapes, as before this was added.
         """
         h = self.norm1(q)
-        attn_out, _ = self.self_attn(h, h, h, need_weights=False)
+        if self_attn_split is not None:
+            # The unconditioned rows run on their own (B, n_gen, D) tensor with
+            # no attn_mask: the same op, the same shape, and therefore the same
+            # kernel and the same floating-point accumulation as the plain path
+            # below. That is what makes the step-0 identity exact rather than
+            # approximate. A 67-wide masked softmax would sum 39 finite terms
+            # plus 28 zeros in a different order and drift in the last bits.
+            n = int(self_attn_split)
+            hg = h[:, :n]
+            og, _ = self.self_attn(hg, hg, hg, need_weights=False)
+            hc = h[:, n:]
+            oc, _ = self.self_attn(hc, h, h, need_weights=False)
+            attn_out = torch.cat([og, oc], dim=1)
+        elif self_attn_mask is not None:
+            attn_out, _ = self.self_attn(h, h, h, attn_mask=self_attn_mask,
+                                         need_weights=False)
+        else:
+            attn_out, _ = self.self_attn(h, h, h, need_weights=False)
         q = q + attn_out
 
         h = self.norm2(q)
@@ -156,6 +185,10 @@ class QFormer(nn.Module):
         cross_attn_mask: torch.Tensor | None = None,
         return_tokens: bool = False,
         return_attn: bool = False,
+        queries: torch.Tensor | None = None,
+        self_attn_split: int | None = None,
+        self_attn_mask: torch.Tensor | None = None,
+        pool_index: torch.Tensor | None = None,
     ):
         """Run the Q-Former.
 
@@ -169,6 +202,15 @@ class QFormer(nn.Module):
         return_tokens : when True, return ``(pooled, tokens)`` where ``tokens``
             is the pre-pool ``(B, Q, D)`` sequence (used by ITM head and
             generative decoder).
+        queries : optional ``(B, S, D)`` slot bank supplied by the caller instead
+            of ``self.queries``. The context bank uses this to widen S beyond
+            ``num_queries`` by repeating tied rows and conditioning a subset.
+        self_attn_split, self_attn_mask : forwarded to every block; see
+            :meth:`QFormerBlock.forward`.
+        pool_index : LongTensor of slots to average. Required whenever
+            ``queries`` is wider than ``num_queries`` -- pooling over the whole
+            bank would fold conditioned slots into the pooled vector, which is
+            the fourth and least visible indication-leak path.
 
         Returns
         -------
@@ -179,18 +221,36 @@ class QFormer(nn.Module):
         img_tokens = self.image_norm(img_tokens)
 
         B = img_tokens.shape[0]
-        q = self.queries.unsqueeze(0).expand(B, -1, -1).contiguous()
+        if queries is None:
+            q = self.queries.unsqueeze(0).expand(B, -1, -1).contiguous()
+        else:
+            q = queries
+            if q.shape[0] != B or q.shape[-1] != self.dim:
+                raise ValueError(f"queries must be (B, S, {self.dim}) with B={B}, "
+                                 f"got {tuple(q.shape)}")
+            # A wider bank without an explicit pool index would silently mean-pool
+            # the conditioned slots into the "unconditioned" latent. Refuse rather
+            # than rely on every call site remembering.
+            if q.shape[1] != self.num_queries and pool_index is None:
+                raise ValueError(
+                    f"a {q.shape[1]}-slot bank was supplied over {self.num_queries} "
+                    "query rows, but pool_index is None: pooling would average "
+                    "conditioned slots into the pooled latent")
+        extra = dict(self_attn_split=self_attn_split, self_attn_mask=self_attn_mask)
         last_attn = None
         n_layers = len(self.layers)
         for i, layer in enumerate(self.layers):
             is_last = (i == n_layers - 1)
             if return_attn and is_last:
-                q, last_attn = layer(q, img_tokens, cross_attn_mask=cross_attn_mask, return_attn=True)
+                q, last_attn = layer(q, img_tokens, cross_attn_mask=cross_attn_mask,
+                                     return_attn=True, **extra)
             else:
-                q = layer(q, img_tokens, cross_attn_mask=cross_attn_mask)
+                q = layer(q, img_tokens, cross_attn_mask=cross_attn_mask, **extra)
         q = self.norm_out(q)
 
-        if self.pool == "mean":
+        if pool_index is not None:
+            pooled = q.index_select(1, pool_index).mean(dim=1)
+        elif self.pool == "mean":
             pooled = q.mean(dim=1)
         else:  # "cls"
             pooled = q[:, 0]
