@@ -11,18 +11,25 @@ preprocessing and several loss paths all diverge from the published adult model.
 ## What is here
 
 ```
+arcct/             the model package — this is the working copy, not a snapshot
+  schema.py          27-class pediatric schema + 10-region routing (new)
+  dataset.py         air padding, HU floor, NaN labels, empty-region verdicts
+  anatomy_qformer.py role-mask construction
+  image_encoder.py   multi-scale feature pyramid (RAC_USE_MULTISCALE)
+tools/             train_stage2.py, evaluate.py, and the rest
+configs/           stage2_peds.env (pediatric), stage2.env (adult reference)
 pipeline/          the pediatric pipeline, one folder per stage
   lib/             shared modules (LLM extractor, region maps, report sectioniser)
   00_setup … 08_analysis
-arcct_changes/     the files modified inside the upstream arc-ct repo
-  arcct/           dataset.py, anatomy_qformer.py, schema.py, image_encoder.py
-  tools/           train_stage2.py, evaluate.py
-  configs/         stage2_peds.env
 ```
 
-`arcct_changes/` is a snapshot for provenance — the working copies live in the
-upstream clone. 257 lines changed across 7 files, plus two new files
-(`schema.py`, `stage2_peds.env`).
+**This repository is where the pediatric code lives and runs.** The upstream
+`arc-ct` clone on the cluster has been restored to its published state and is
+kept only as the reference that reproduces the adult 0.8524 gate. Every job
+script under `pipeline/` points at this repository, not at upstream.
+
+Divergence from upstream at the time of the fork: 257 lines across 7 files, plus
+two new files (`arcct/schema.py`, `configs/stage2_peds.env`).
 
 ## What is deliberately NOT here
 
