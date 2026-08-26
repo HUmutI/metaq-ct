@@ -7,7 +7,7 @@
 #SBATCH --output=/temp_work/ch278233/BCH_DATASET/LABELS/_slurm/tier0_%j.out
 set -uo pipefail
 export TMPDIR=/temp_work/ch278233/tmp
-$HOME/micromamba/envs/arcct/bin/python $HOME/pipeline/08_analysis/test_kw_baseline.py || exit 1
+$HOME/micromamba/envs/arcct/bin/python $ARCCT_ROOT/pipeline/08_analysis/test_kw_baseline.py || exit 1
 echo
-$HOME/micromamba/envs/arcct/bin/python $HOME/pipeline/08_analysis/tier0.py
+$HOME/micromamba/envs/arcct/bin/python $ARCCT_ROOT/pipeline/08_analysis/tier0.py
 echo "TIER0 rc=$?"

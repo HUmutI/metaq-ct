@@ -33,7 +33,7 @@ export SHARD_N=${SLURM_ARRAY_TASK_COUNT:-1}
 # ts_ctrate.py takes npz directly and reduces each volume to its 10-region mask
 # in one pass, so no intermediate NIfTI is kept: materialising 3k (or later 47k)
 # resampled volumes would cost hundreds of GB for nothing.
-"$TS/bin/python" $HOME/pipeline/03_masks/ts_ctrate.py \
+"$TS/bin/python" $ARCCT_ROOT/pipeline/03_masks/ts_ctrate.py \
     --in-dir  /temp_work/ch278233/CTRATE/mps_ct_npz/valid \
     --out-dir /temp_work/ch278233/CTRATE_TS_RAW/valid
 echo "=== shard $SHARD_ID done rc=$? ==="

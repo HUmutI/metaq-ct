@@ -30,7 +30,7 @@ nvidia-smi --query-gpu=name --format=csv,noheader
 export TS_WORKLIST=${TS_WORKLIST:-}
 export SHARD_ID=${SLURM_ARRAY_TASK_ID:-0}
 export SHARD_N=${SLURM_ARRAY_TASK_COUNT:-1}
-"$TS/bin/python" $HOME/pipeline/03_masks/ts_batch.py \
+"$TS/bin/python" $ARCCT_ROOT/pipeline/03_masks/ts_batch.py \
     --in-dir /temp_work/ch278233/TS_RESAMPLED \
     --out-dir /temp_work/ch278233/TS_MASKS_PEDS
 echo "=== shard $SHARD_ID done rc=$? ==="

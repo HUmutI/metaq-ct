@@ -23,7 +23,7 @@ fi
 $MM create -y -n arcct -c conda-forge python=3.11 pip
 
 echo "=== pip install requirements ==="
-$MM run -n arcct pip install --no-input -r $HOME/arc-ct/requirements.txt
+$MM run -n arcct pip install --no-input -r $HOME/bch-arc-ct/requirements.txt
 
 echo "=== pip install huggingface_hub ==="
 # The README says `pip install -U huggingface_hub`, but that pulls 1.x and

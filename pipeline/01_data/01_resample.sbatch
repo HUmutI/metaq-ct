@@ -15,6 +15,6 @@ LIST=$TMPDIR/resamp_chunk_${SLURM_JOB_ID}_$I.txt
 awk -v n="$N" -v i="$I" 'NR % n == i' /temp_work/ch278233/all_nii.txt > "$LIST"
 trap 'rm -f "$LIST"' EXIT
 echo "=== shard $I/$N: $(wc -l < "$LIST") volumes on $(hostname) ==="
-$HOME/micromamba/envs/arcct/bin/python $HOME/pipeline/01_data/resample_for_ts.py \
+$HOME/micromamba/envs/arcct/bin/python $ARCCT_ROOT/pipeline/01_data/resample_for_ts.py \
     --list "$LIST" --out-dir /temp_work/ch278233/TS_RESAMPLED
 echo "=== shard $I done rc=$? ==="

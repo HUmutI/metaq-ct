@@ -24,7 +24,7 @@ export VLLM_USE_FLASHINFER_SAMPLER=0
 # only have an older /lib64/libstdc++.so.6 without it, and the env's libicui18n
 # then fails to load. The smoke happened to land on a new-enough node while all
 # eight shards did not. Put the env's lib dir first so this is node-independent.
-PYBIN=$(cat $HOME/pipeline/07_ops/PYENV)
+PYBIN=$(cat $ARCCT_ROOT/pipeline/07_ops/PYENV)
 export LD_LIBRARY_PATH=$(dirname $(dirname "$PYBIN"))/lib:${LD_LIBRARY_PATH:-}
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 
@@ -68,7 +68,7 @@ nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 
 # Call the env's python directly: `micromamba run` takes a global lock that
 # serialises simultaneous array tasks on the same node.
-$(cat $HOME/pipeline/07_ops/PYENV) $HOME/pipeline/lib/qwen_extract.py \
+$(cat $ARCCT_ROOT/pipeline/07_ops/PYENV) $ARCCT_ROOT/pipeline/lib/qwen_extract.py \
     --sentences "$OUT/sentences.jsonl" \
     --out-dir   "$OUT" \
     --model     "${PED_QWEN_MODEL:-Qwen/Qwen3-8B}" \

@@ -9,6 +9,6 @@ set -uo pipefail
 export HF_HOME=/temp_work/ch278233/hf_cache
 export TMPDIR=/temp_work/ch278233/tmp
 export OMP_NUM_THREADS=8
-$HOME/micromamba/envs/arcct/bin/python $HOME/pipeline/01_data/ctrate_fetch_npz.py \
+$HOME/micromamba/envs/arcct/bin/python $ARCCT_ROOT/pipeline/01_data/ctrate_fetch_npz.py \
     --batch 224 --workers 8 --cworkers 14 --stop-below-gb 250
 echo "=== CTFETCH rc=$? ==="

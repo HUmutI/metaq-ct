@@ -11,8 +11,11 @@
 set -uo pipefail
 E=$HOME/micromamba/envs/arcct
 export LD_LIBRARY_PATH=$E/lib:${LD_LIBRARY_PATH:-}
-export PYTHONPATH=$HOME/arc-ct:${PYTHONPATH:-}
-set -a; . $HOME/arc-ct/configs/stage2_peds.env; set +a
+export ARCCT_ROOT=$HOME/bch-arc-ct
+export PYTHONPATH=$ARCCT_ROOT:${PYTHONPATH:-}
+CFG=$ARCCT_ROOT/configs/stage2_peds.env
+[ -r "$CFG" ] || { echo "FATAL: $CFG okunamiyor"; exit 78; }
+set -a; . "$CFG"; set +a
 
 # SET selects which validation cohort to score on. evaluate.py derives its npz
 # dir and reports CSV from RAC_DATA_ROOT with fixed sub-paths, so each cohort is
@@ -55,7 +58,8 @@ export EVAL_RESULTS_DIR=/temp_work/ch278233/eval_matrix/${SET}/${TAG:?TAG gerekl
 mkdir -p "$EVAL_RESULTS_DIR"
 
 echo "=== SET=$SET TAG=$TAG $(date) ==="
-$E/bin/python $HOME/arc-ct/tools/evaluate.py
+$E/bin/python $ARCCT_ROOT/pipeline/lib/check_env.py --root "$ARCCT_ROOT" --expect-classes 27 --expect-schema peds || exit 78
+$E/bin/python $ARCCT_ROOT/tools/evaluate.py
 rc=$?
 echo "=== rc=$rc $(date) ==="
 exit $rc

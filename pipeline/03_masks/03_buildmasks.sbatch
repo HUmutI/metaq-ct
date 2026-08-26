@@ -9,6 +9,6 @@ set -uo pipefail
 export TMPDIR=/temp_work/ch278233/tmp
 export SHARD_ID=${SLURM_ARRAY_TASK_ID:-0}
 export SHARD_N=${SLURM_ARRAY_TASK_COUNT:-1}
-$HOME/micromamba/envs/arcct/bin/python $HOME/pipeline/03_masks/build_peds_masks.py \
+$HOME/micromamba/envs/arcct/bin/python $ARCCT_ROOT/pipeline/03_masks/build_peds_masks.py \
     --in-dir /temp_work/ch278233/TS_MASKS_PEDS \
     --schema 10 --out-dir /temp_work/ch278233/PEDS_MASKS10_192

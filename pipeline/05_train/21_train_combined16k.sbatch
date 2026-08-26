@@ -18,9 +18,11 @@ set -uo pipefail
 E=$HOME/micromamba/envs/arcct
 export LD_LIBRARY_PATH=$E/lib:${LD_LIBRARY_PATH:-}
 export TMPDIR=/tmp/comb16k_$SLURM_JOB_ID; mkdir -p "$TMPDIR"
-export PYTHONPATH=$HOME/arc-ct:${PYTHONPATH:-}
-
-set -a; . $HOME/arc-ct/configs/stage2_peds.env; set +a
+export ARCCT_ROOT=$HOME/bch-arc-ct
+export PYTHONPATH=$ARCCT_ROOT:${PYTHONPATH:-}
+CFG=$ARCCT_ROOT/configs/stage2_peds.env
+[ -r "$CFG" ] || { echo "FATAL: $CFG okunamiyor"; exit 78; }
+set -a; . "$CFG"; set +a
 
 # Same batch as the pediatric run - 46 GB does not allow more, and keeping it
 # equal makes the two runs comparable step for step.
@@ -56,7 +58,8 @@ nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 echo "schema=$RAC_SCHEMA queries=$RAC_QFORMER_QUERIES batch=$RAC_BATCH_SIZE require_mask=$RAC_REQUIRE_MASK"
 echo "train: $(wc -l < $RAC_VOLUME_LIST_TRAIN)  valid: $(wc -l < $RAC_VOLUME_LIST_VALID)"
 
-$E/bin/python $HOME/arc-ct/tools/train_stage2.py
+$E/bin/python $ARCCT_ROOT/pipeline/lib/check_env.py --root "$ARCCT_ROOT" --expect-classes 27 --expect-schema peds || exit 78
+$E/bin/python $ARCCT_ROOT/tools/train_stage2.py
 rc=$?
 echo "=== rc=$rc $(date) ==="
 # The echo used to be the last command, so the script always exited 0 and SLURM

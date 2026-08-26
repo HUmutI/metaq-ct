@@ -9,8 +9,11 @@
 set -uo pipefail
 E=$HOME/micromamba/envs/arcct
 export LD_LIBRARY_PATH=$E/lib:${LD_LIBRARY_PATH:-}
-export PYTHONPATH=$HOME/arc-ct:${PYTHONPATH:-}
-set -a; . $HOME/arc-ct/configs/stage2_peds.env; set +a
+export ARCCT_ROOT=$HOME/bch-arc-ct
+export PYTHONPATH=$ARCCT_ROOT:${PYTHONPATH:-}
+CFG=$ARCCT_ROOT/configs/stage2_peds.env
+[ -r "$CFG" ] || { echo "FATAL: $CFG okunamiyor"; exit 78; }
+set -a; . "$CFG"; set +a
 
 # evaluate.py derives its valid npz dir and reports CSV from RAC_DATA_ROOT with
 # fixed sub-paths, so the layout is reproduced with symlinks rather than by
@@ -41,7 +44,8 @@ mkdir -p "$EVAL_RESULTS_DIR"
 
 echo "=== $TAG  $(date) ==="
 echo "ckpt=$CKPT"
-$E/bin/python $HOME/arc-ct/tools/evaluate.py
+$E/bin/python $ARCCT_ROOT/pipeline/lib/check_env.py --root "$ARCCT_ROOT" --expect-classes 27 --expect-schema peds || exit 78
+$E/bin/python $ARCCT_ROOT/tools/evaluate.py
 rc=$?
 echo "=== eval rc=$rc $(date) ==="
 exit $rc

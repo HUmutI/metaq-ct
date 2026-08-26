@@ -13,12 +13,12 @@ END=$(( $(date +%s) + 46*3600 ))          # stop looping 2h before the limit
 while [ "$(date +%s)" -lt "$END" ]; do
     {
         echo "----- $(date '+%F %T') -----"
-        $HOME/micromamba/envs/arcct/bin/python $HOME/pipeline/07_ops/watchdog2.py 2>&1 \
+        $HOME/micromamba/envs/arcct/bin/python $ARCCT_ROOT/pipeline/07_ops/watchdog2.py 2>&1 \
             | grep -E "^\[|^  (ok|!!|step |son val|bos bolge)|^SORUN"
     } >> "$LOG" 2>&1
     # keep the file readable: last 4000 lines is a couple of days of history
     tail -4000 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
     sleep 600
 done
-sbatch $HOME/pipeline/07_ops/90_watchdog.sbatch          # hand over before the wall
+sbatch $ARCCT_ROOT/pipeline/07_ops/90_watchdog.sbatch          # hand over before the wall
 echo "resubmitted at $(date)"

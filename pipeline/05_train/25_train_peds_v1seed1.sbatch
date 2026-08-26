@@ -15,9 +15,11 @@ set -uo pipefail
 E=$HOME/micromamba/envs/arcct
 export LD_LIBRARY_PATH=$E/lib:${LD_LIBRARY_PATH:-}   # some nodes lack CXXABI_1.3.15
 export TMPDIR=/tmp/pedv1s1_$SLURM_JOB_ID; mkdir -p "$TMPDIR"
-export PYTHONPATH=$HOME/arc-ct:${PYTHONPATH:-}
-
-set -a; . $HOME/arc-ct/configs/stage2_peds.env; set +a
+export ARCCT_ROOT=$HOME/bch-arc-ct
+export PYTHONPATH=$ARCCT_ROOT:${PYTHONPATH:-}
+CFG=$ARCCT_ROOT/configs/stage2_peds.env
+[ -r "$CFG" ] || { echo "FATAL: $CFG okunamiyor"; exit 78; }
+set -a; . "$CFG"; set +a
 
 OUT=/temp_work/ch278233/runs/peds_finetune_v1_seed1
 mkdir -p "$OUT"
@@ -55,7 +57,8 @@ nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 echo "schema=$RAC_SCHEMA queries=$RAC_QFORMER_QUERIES require_mask=$RAC_REQUIRE_MASK"
 echo "train list: $(wc -l < $RAC_VOLUME_LIST_TRAIN)  valid list: $(wc -l < $RAC_VOLUME_LIST_VALID)"
 
-$E/bin/python $HOME/arc-ct/tools/train_stage2.py
+$E/bin/python $ARCCT_ROOT/pipeline/lib/check_env.py --root "$ARCCT_ROOT" --expect-classes 27 --expect-schema peds || exit 78
+$E/bin/python $ARCCT_ROOT/tools/train_stage2.py
 rc=$?
 echo "=== TRAIN rc=$rc $(date) ==="
 # exit with the trainer's code, not the echo's. Without this SLURM logs

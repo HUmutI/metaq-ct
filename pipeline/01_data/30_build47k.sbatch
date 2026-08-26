@@ -7,7 +7,8 @@
 #SBATCH --output=/temp_work/ch278233/ts_logs/build47k_%j.out
 set -uo pipefail
 E=$HOME/micromamba/envs/arcct
-export PYTHONPATH=$HOME/arc-ct:${PYTHONPATH:-}
+export ARCCT_ROOT=$HOME/bch-arc-ct
+export PYTHONPATH=$ARCCT_ROOT:${PYTHONPATH:-}
 
 # The CT-RATE fetch runs under a different account, so SLURM cannot express the
 # dependency - poll instead. Stop on a target count OR on the fetch job leaving
@@ -31,10 +32,10 @@ done
 # Validate before assembling: one 0-byte npz killed a 12,000-step run 13 minutes
 # in, and the assembler hardlinks whatever it finds.
 echo "=== $(date) npz dogrulama ==="
-$E/bin/python $HOME/pipeline/01_data/validate_npz.py --root "$SRC" --out /temp_work/ch278233/BAD_NPZ_FETCH.txt || true
+$E/bin/python $ARCCT_ROOT/pipeline/01_data/validate_npz.py --root "$SRC" --out /temp_work/ch278233/BAD_NPZ_FETCH.txt || true
 
 echo "=== $(date) birlesik veri seti (47k) ==="
-$E/bin/python $HOME/pipeline/04_dataset/build_combined.py
+$E/bin/python $ARCCT_ROOT/pipeline/04_dataset/build_combined.py
 rc=$?
 echo "=== build47k rc=$rc $(date) ==="
 exit $rc

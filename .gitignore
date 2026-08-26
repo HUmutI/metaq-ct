@@ -1,14 +1,5 @@
 __pycache__/
 *.pyc
-*.bak*
-*.log
-.cache/
 
-# Never commit data or model weights - they live on /temp_work and are large,
-# and the clinical text they derive from must not leave the cluster.
-*.npz
-*.nii.gz
-*.pt
-*.csv
-*.jsonl
-*.tsv
+# Pasted screenshots, not part of the figure source
+pipeline/pipeline_figures/*.png
