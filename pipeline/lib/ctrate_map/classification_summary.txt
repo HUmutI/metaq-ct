@@ -1,0 +1,155 @@
+TOTAL REPORTS: 1206
+
+=== NORMAL vs ABNORMAL ===
+Abnormal       992   82.3%
+Normal         214   17.7%
+
+=== AGE GROUPS ===
+00 <1y (infant)               38    3.2%
+01 1-2y (toddler)             31    2.6%
+02 3-5y (preschool)           93    7.7%
+03 6-11y (school age)        141   11.7%
+04 12-17y (adolescent)       276   22.9%
+05 18-25y (young adult)      192   15.9%
+06 26+y (adult)               38    3.2%
+unknown                      397   32.9%
+
+age known: 809 (67.1%)  median 14.0y  mean 13.3y  range 0.02-56y
+
+=== FINDINGS (impression-level, positive) ===
+Pulmonary nodule(s)                    646   53.6%
+Pneumonia / infection                  291   24.1%
+Ground-glass opacity                   185   15.3%
+Atelectasis                            157   13.0%
+Bronchial wall thickening              143   11.9%
+Air trapping / mosaic                  119    9.9%
+Scarring / fibrosis                    107    8.9%
+Metastatic disease                     103    8.5%
+Bronchiectasis                          98    8.1%
+Tree-in-bud                             87    7.2%
+Cyst / cystic change                    83    6.9%
+Consolidation                           76    6.3%
+Mass / neoplasm                         67    5.6%
+Pleural effusion                        65    5.4%
+Mucus plugging                          50    4.1%
+Pleural thickening                      35    2.9%
+Septal / interstitial thickening        31    2.6%
+Bone lesion / fracture                  30    2.5%
+Lymphadenopathy                         26    2.2%
+Pneumothorax                            24    2.0%
+Pericardial effusion                    20    1.7%
+Calcified granuloma                     19    1.6%
+Cavitation                              13    1.1%
+Emphysema / bullae                      13    1.1%
+Hernia                                  13    1.1%
+Scoliosis / chest wall deform           12    1.0%
+Cardiomegaly                            11    0.9%
+Esophageal abnormality                   7    0.6%
+Vascular anomaly                         4    0.3%
+Pulmonary embolism                       2    0.2%
+Thymic abnormality                       1    0.1%
+
+=== FINDINGS (whole report body, positive) ===
+Pulmonary nodule(s)                    649   53.8%
+Pneumonia / infection                  292   24.2%
+Ground-glass opacity                   191   15.8%
+Atelectasis                            173   14.3%
+Bronchial wall thickening              149   12.4%
+Air trapping / mosaic                  121   10.0%
+Scarring / fibrosis                    114    9.5%
+Metastatic disease                     103    8.5%
+Bronchiectasis                         100    8.3%
+Tree-in-bud                             88    7.3%
+Cyst / cystic change                    87    7.2%
+Consolidation                           77    6.4%
+Lymphadenopathy                         70    5.8%
+Mass / neoplasm                         69    5.7%
+Pleural effusion                        65    5.4%
+Mucus plugging                          52    4.3%
+Pleural thickening                      44    3.6%
+Lines / support devices                 34    2.8%
+Septal / interstitial thickening        34    2.8%
+Bone lesion / fracture                  30    2.5%
+Pneumothorax                            24    2.0%
+Pericardial effusion                    21    1.7%
+Calcified granuloma                     20    1.7%
+Scoliosis / chest wall deform           13    1.1%
+Cavitation                              13    1.1%
+Emphysema / bullae                      13    1.1%
+Hernia                                  13    1.1%
+Cardiomegaly                            12    1.0%
+Esophageal abnormality                   7    0.6%
+Vascular anomaly                         4    0.3%
+Pulmonary embolism                       2    0.2%
+Thymic abnormality                       1    0.1%
+
+=== INDICATION CATEGORIES ===
+Oncology - solid tumor / sarcoma               475   39.4%
+Oncology - other / staging / surveillance      434   36.0%
+Infection / febrile neutropenia                182   15.1%
+Pulmonary nodule follow-up                     147   12.2%
+Cystic fibrosis / bronchiectasis               142   11.8%
+Hemoptysis / respiratory sx                    117    9.7%
+Transplant / GVHD                              102    8.5%
+Interstitial lung disease                      100    8.3%
+Airway / stridor / asthma                       94    7.8%
+Oncology - leukemia / lymphoma                  57    4.7%
+Immunodeficiency                                21    1.7%
+Congenital / vascular anomaly                   14    1.2%
+Chest wall / skeletal                           13    1.1%
+Trauma                                           9    0.7%
+(no indication keyword matched)                128
+
+=== BURDEN: # distinct impression findings per report ===
+0 finding(s):   229   19.0%
+1 finding(s):   365   30.3%
+2 finding(s):   217   18.0%
+3 finding(s):   163   13.5%
+4 finding(s):    76    6.3%
+5 finding(s):    69    5.7%
+6 finding(s):    43    3.6%
+7 finding(s):    21    1.7%
+8 finding(s):    14    1.2%
+9 finding(s):     7    0.6%
+10 finding(s):     1    0.1%
+11 finding(s):     1    0.1%
+
+=== ABNORMAL RATE BY AGE GROUP ===
+                           n  abn   pct
+age_bin                                
+00 <1y (infant)           38   34  89.5
+01 1-2y (toddler)         31   27  87.1
+02 3-5y (preschool)       93   71  76.3
+03 6-11y (school age)    141  116  82.3
+04 12-17y (adolescent)   276  224  81.2
+05 18-25y (young adult)  192  164  85.4
+06 26+y (adult)           38   32  84.2
+unknown                  397  324  81.6
+
+
+================================================================================
+METHOD & CAVEATS
+================================================================================
+Source: just_reports.xlsx (column 'Report Text', 1206 rows, 0 empty)
+Script: classify_reports.py   Per-report labels: classified_reports.csv
+
+Method: rule-based. Sections split on ALL-CAPS headers (INDICATION / FINDINGS /
+IMPRESSION). Findings matched by regex keyword + negation filter (~60-char
+lookback window, cut at sentence/clause break). Age parsed from INDICATION
+(7yo, 7 y.o., 7-year-old, 8F, N month/week/day old, newborn).
+
+Normal vs Abnormal: report = Normal if no positive (non-negated) finding
+keyword in IMPRESSION and no residual abnormality wording after negated
+sentences are stripped; explicit "Normal CT of the chest" opening forces Normal.
+
+Findings are MULTI-LABEL - percentages sum > 100%. Same for indication
+categories.
+
+Known error sources (spot-checked, not quantified):
+ - Abnormalities with no keyword match fall into Normal (e.g. an impression
+   describing only bronchial stent narrowing).
+ - "Pneumonia / infection" includes speculative wording ("likely infectious or
+   inflammatory etiology"), not confirmed infection.
+ - Negation window misses long-range negation and complex hedging.
+ - 397/1206 (32.9%) reports have no parseable age.
+No hand-labeled gold set exists, so accuracy is unmeasured.
