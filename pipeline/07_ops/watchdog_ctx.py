@@ -75,6 +75,25 @@ def squeue() -> dict[str, dict]:
 
 
 def find_log(jid: str) -> str | None:
+    """Where this job is actually writing, asked of SLURM before guessing.
+
+    Scanning one directory only works for jobs that happen to write there. The V3
+    extraction writes into its own output tree, so the watchdog could not see its
+    log, could not measure whether it had stopped growing, and reported "RUNNING
+    but no log file exists yet" every cycle -- honest, and useless: those jobs were
+    the ones running unmonitored overnight. scontrol knows the real path.
+    """
+    try:
+        out = subprocess.run(["scontrol", "show", "job", jid],
+                             capture_output=True, text=True, timeout=20).stdout
+        m = re.search(r"StdOut=(\S+)", out)
+        if m:
+            path = m.group(1)
+            # SLURM reports the pattern with %A/%a already substituted.
+            if os.path.isfile(path):
+                return path
+    except (OSError, subprocess.SubprocessError):
+        pass
     if not os.path.isdir(LOG_DIR):
         return None
     hits = [os.path.join(LOG_DIR, f) for f in os.listdir(LOG_DIR)

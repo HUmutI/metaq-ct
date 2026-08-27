@@ -4,7 +4,7 @@ Every run of this project: finished, in flight, and queued. **Generated** by
 `tools/exp_log.py` -- do not edit the tables by hand, edit `docs/experiments.yaml`
 and re-render. Every AUC below is read off disk at render time.
 
-Rendered 2026-08-27 22:18 UTC.
+Rendered 2026-08-27 22:41 UTC.
 
 Two architectures appear here and they must never be compared casually:
 
@@ -209,6 +209,8 @@ The winner rerun with anatomy masks on the adult half too. Held separate from th
 ## Journal
 
 Dated record of what happened and what it changed. Newest first.
+
+**2026-08-27 — The ribcage-derived pleural region does not work -- measured, not assumed**  Rebuilding region 8 from the bony thorax instead of the lung leaves it essentially EMPTY: 130-212 voxels against the old 133k-265k, and 207 of 208 volumes reach ZERO tokens on the 12x12x12 grid. A region with no tokens makes its query UNRESTRICTED, so this is not a fix but a silent deletion of the anatomy query. The cause is obvious in hindsight: the ribcage interior is already lung, heart and vessels, and the pleural region may only claim background, so nothing is left to claim. The decision file was NOT written and the overnight chain keeps the existing definition -- known behaviour beats an unverified one. What the first measurement actually implies is narrower and more useful: TotalSegmentator folds pneumothorax air INTO the lung label, so no pleural-space definition can capture it, and the candidate worth testing next is routing Pneumothorax to the lung lobes rather than to region 8.
 
 **2026-08-27 — The routing penalty is two broken regions, and the fix is measured not assumed**  Region 8 is not the pleural space. On 400 volumes stratified for the class it reads +6 HU on pneumothorax positives against -98 HU on negatives -- 104 HU the WRONG way for an air finding, with the region twice the size. The shell is derived by dilating the lung union, so its geometry is a function of the pathology: TotalSegmentator folds pneumothorax air into the lung field, the shell lands further out in the chest wall, and the pooled feature ends up anti-correlated with the finding. Rebuilt from the bony ribcage instead, which does not move when a lung collapses. Being verified on a rebuilt sample before any of the 47k masks are committed to it.
 

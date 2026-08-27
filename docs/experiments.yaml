@@ -526,6 +526,21 @@ experiments:
 
 journal:
   - date: 2026-08-27
+    title: The ribcage-derived pleural region does not work -- measured, not assumed
+    text: >-
+      Rebuilding region 8 from the bony thorax instead of the lung leaves it
+      essentially EMPTY: 130-212 voxels against the old 133k-265k, and 207 of 208
+      volumes reach ZERO tokens on the 12x12x12 grid. A region with no tokens makes
+      its query UNRESTRICTED, so this is not a fix but a silent deletion of the
+      anatomy query. The cause is obvious in hindsight: the ribcage interior is
+      already lung, heart and vessels, and the pleural region may only claim
+      background, so nothing is left to claim. The decision file was NOT written and
+      the overnight chain keeps the existing definition -- known behaviour beats an
+      unverified one. What the first measurement actually implies is narrower and
+      more useful: TotalSegmentator folds pneumothorax air INTO the lung label, so
+      no pleural-space definition can capture it, and the candidate worth testing
+      next is routing Pneumothorax to the lung lobes rather than to region 8.
+  - date: 2026-08-27
     title: The routing penalty is two broken regions, and the fix is measured not assumed
     text: >-
       Region 8 is not the pleural space. On 400 volumes stratified for the class it
