@@ -148,13 +148,32 @@ def main() -> int:
 
     print("=== P4 band coverage in TRAIN ===")
     tb = Counter(int(dem[v]["AgeBand"]) for v in tr if v in dem)
-    empty = [b for b in range(10) if tb.get(b, 0) == 0]
-    if empty:
-        fail(f"P4: bands {empty} are EMPTY in train; the ordinal increment for "
-             "an untrained band propagates into every band above it")
-    else:
-        ok("all 10 bands populated in train: " +
-           " ".join(f"{b}:{tb.get(b,0)}" for b in range(10)))
+    vb = Counter(int(dem[v]["AgeBand"]) for v in va if v in dem)
+    # A band absent from TRAIN but present in VALID is the real fault: the model
+    # is asked at evaluation for an increment it never learned. A band absent
+    # from BOTH is a property of the cohort, not a defect -- CT-RATE is adults,
+    # so the six pediatric bands cannot appear and never will. Their increments
+    # stay at init and enter every band above them as the SAME constant, which
+    # the base embedding absorbs; the earlier version of this check refused to
+    # start an adult-only run for that constant.
+    unseen = [b for b in range(10) if tb.get(b, 0) == 0 and vb.get(b, 0) == 0]
+    missing = [b for b in range(10) if tb.get(b, 0) == 0 and vb.get(b, 0) > 0]
+    if missing:
+        fail(f"P4: bands {missing} are EMPTY in train but PRESENT in valid; the "
+             "ordinal increment for an untrained band propagates into every band "
+             "above it, and here it is asked for at evaluation")
+    thin = [b for b in range(10) if 0 < tb.get(b, 0) < 50 and b not in unseen]
+    if thin:
+        # Not fatal, but it is worth saying out loud: an increment shared by every
+        # band above it, fitted on a handful of volumes, is noise with leverage.
+        ok(f"WARN bands {thin} are thin in train "
+           + " ".join(f"{b}:{tb.get(b, 0)}" for b in thin)
+           + " -- their increments are shared by all bands above them")
+    if unseen:
+        ok(f"bands {unseen} absent from BOTH train and valid (cohort has no such "
+           "ages); their increments stay at init and never reach evaluation")
+    if not missing:
+        ok("band coverage: " + " ".join(f"{b}:{tb.get(b,0)}" for b in range(10)))
     pres = sum(1 for v in tr if v in ctx and ctx[v]["ind_status"] == "present")
     ok(f"train indications present: {pres:,}/{len(tr):,} ({100.0*pres/max(len(tr),1):.1f}%)")
     if pres < 0.10 * len(tr):

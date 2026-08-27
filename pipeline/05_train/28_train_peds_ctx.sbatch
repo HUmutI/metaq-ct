@@ -3,12 +3,19 @@
 # Both GPU partitions. bch-gpu alone was estimating a start a WEEK out while
 # bch-gpu-pe could start in minutes; letting SLURM take whichever frees
 # first is the difference between results tomorrow and results next week.
-#SBATCH --partition=bch-gpu-pe,bch-gpu
+#SBATCH --partition=bch-gpu-pe,bch-gpu,bch-gpu-xlarge
 # gpu:large, not gpu:1. Adding bch-gpu-pe to the partition list brought its
 # gpu:medium nodes with it, and a 24 GB TITAN RTX cannot hold this recipe --
 # ct_only seed=1 landed on gpu-1-0 and OOMed at 22.4 of 23.5 GiB. bch-gpu had
 # only large and xlarge cards, so this never came up before tonight.
-#SBATCH --gres=gpu:large:1
+#SBATCH --gres=gpu:1
+#SBATCH --exclude=gpu-1-0,gpu-2-0
+# gpu:large excluded the A100s. They are gpu:xlarge, so a gpu:large request can
+# never match one, and bch-gpu-xlarge was not in the partition list either --
+# 24 A100s, the pool this account contends least for, were unreachable twice
+# over. gpu:large was chosen to avoid the 24 GB TITANs, which OOM; those are
+# gpu-1-0 and gpu-2-0 and they are the ONLY medium nodes across all three
+# partitions, so excluding them by name does the same job without the cost.
 #SBATCH --time=1-12:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=96G

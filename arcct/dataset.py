@@ -603,10 +603,21 @@ class RACDatasetV4(Dataset):
                     mine = self.ind_cohort.get(accession, "")
                     same = [a for a in pool if self.ind_cohort.get(a, "") == mine]
                     pool = same or pool
+                # Reject on the TEXT, not just the accession. Short adult
+                # requisitions repeat heavily -- CT-RATE has thousands of rows
+                # reading little more than one question -- so a partner drawn
+                # from a different volume frequently carries the identical
+                # string. L_cf then compares a prediction with itself: the term
+                # is exactly zero, contributes no gradient, and quietly dilutes
+                # the counterfactual signal in proportion to how common the
+                # phrasing is. Blank partners are rejected for the same reason.
                 for _ in range(8):
                     pick = pool[rng.randrange(len(pool))]
-                    if pick != accession:
-                        cf = self.acc2ind.get(pick, "")
+                    if pick == accession:
+                        continue
+                    cand = self.acc2ind.get(pick, "")
+                    if cand and cand != ind:
+                        cf = cand
                         break
 
         return {
