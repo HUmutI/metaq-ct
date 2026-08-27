@@ -152,7 +152,9 @@ LABEL_DEFS = {
     # choose.
     "Pulmonary fibrotic sequela": (
         "fibrosis, scarring, reticulation, architectural distortion or "
-        "honeycombing"),
+        "honeycombing. Scarring counts whatever its cause, so scarring "
+        "attributed to prior surgery scores BOTH this and post-surgical "
+        "change"),
     "Pleural effusion": "fluid in the pleural space",
     "Mosaic attenuation pattern": "mosaic attenuation, air trapping, mosaic perfusion",
     # Worst citation support of all 27 classes: 20.3% of 1327 positives cite a
@@ -346,7 +348,9 @@ Rules:
   similar-sounding finding is not evidence: "thickening of the major fissure" is
   not evidence for bronchial wall thickening, and "tree-in-bud nodularity" is not
   evidence for interlobular septal thickening.
-- Never cite the same sentence for two findings unless that sentence names both.
+- One sentence often states two findings, and then it is evidence for both.
+  "Surgical sutures in the left lower lobe with adjacent linear scarring" is
+  evidence for post-surgical change AND for scarring; do not make them compete.
 - Explicitly negated findings ("no pleural effusion", "without consolidation")
   are 0.
 - A finding described as resolved or improved to absent is 0: "interval
