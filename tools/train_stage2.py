@@ -48,7 +48,11 @@ from arcct.dataset import (  # noqa: E402
 from arcct.lora import apply_lora_to_bert, is_lora_parameter  # noqa: E402
 from arcct.image_encoder import RACImageEncoder, load_from_stage1  # noqa: E402
 from arcct.ct_clip import CTCLIP  # noqa: E402
-from arcct.qformer import QFormer  # noqa: E402
+from arcct.qformer import QFormer
+from arcct.context import NO_INDICATION
+from arcct.context_qformer import ContextQFormer
+from arcct.relevance import RelevanceHead
+from arcct.slots import CtxConfig, SlotLayout  # noqa: E402
 from arcct.anatomy_qformer import AnatomyQFormer, build_role_mask  # noqa: E402
 
 
@@ -195,6 +199,15 @@ QFORMER_HEADS = int(os.environ.get("RAC_QFORMER_HEADS", "8"))
 QFORMER_POOL = os.environ.get("RAC_QFORMER_POOL", "mean")
 QFORMER_DIM = 768  # CXR-BERT latent dim
 LM_MAX_LEN = int(os.environ.get("RAC_LM_MAX_LEN", "128"))
+
+# Phase 1: the indication-conditioned bank. Every flag lives in CtxConfig and
+# defaults OFF, so an unset environment reproduces today's run exactly. The
+# weights below are the only two the training loop reads directly.
+CTX_CFG = CtxConfig.from_env()
+USE_CONTEXT_QFORMER = CTX_CFG.enabled
+CTX_PTOK_WEIGHT = CTX_CFG.ptok_weight
+CF_WEIGHT = float(os.environ.get("RAC_CF_WEIGHT", "0.5"))
+CF_TAU = float(os.environ.get("RAC_CF_TAU", "0.5"))
 
 ORGAN_LABELS = sorted(ORGAN_TO_PATHIDX)
 
@@ -403,17 +416,53 @@ def per_class_auc(pred, true):
 
 
 @torch.no_grad()
-def run_validation(clip, tokenizer, device, val_loader, qformer_module=None, use_anatomy_qformer=False):
+def run_validation(clip, tokenizer, device, val_loader, qformer_module=None,
+                   use_anatomy_qformer=False, use_context=False, ctx_cfg=None,
+                   assert_invariance=False):
     clip.eval()
     if qformer_module is not None:
         qformer_module.eval()
     pos_embs, neg_embs = encode_prompts(clip, tokenizer, device)
     all_pred, all_true = [], []
+    empty_sum = empty_n = 0.0
     for ct, _, _, labels, masks_fine, has_masks, _, ctx in tqdm.tqdm(val_loader, desc="Val-global", leave=False):
         ct = ct.to(device, non_blocking=True)
         with amp_context(device):
             feat_map = clip.visual_transformer.forward_spatial(ct)
-            if qformer_module is not None:
+            if use_context and qformer_module is not None:
+                masks_fine = masks_fine.to(device, non_blocking=True)
+                has_masks_d = has_masks.to(device, non_blocking=True)
+                tok = qformer_module.context.tokenize(
+                    tokenizer, ctx["indication"], ctx_cfg.max_ind_len, device)
+                bundle = qformer_module.context(
+                    tok["input_ids"], tok["attention_mask"],
+                    ctx["age_band"].to(device), ctx["sex"].to(device))
+                out = qformer_module(feat_map, masks_fine, has_masks_d,
+                                     context=bundle, return_parts=True)
+                img_lat = out.z_final
+                if out.empty is not None:
+                    # A running mean over the WHOLE pass. build_role_mask's
+                    # last_empty attribute is overwritten by every call, so the
+                    # number the training log used to print was the last batch
+                    # and nothing else.
+                    empty_sum += float(out.empty.float().sum())
+                    empty_n += float(out.empty.numel())
+                if assert_invariance:
+                    # The isolation claim, re-checked at this checkpoint rather
+                    # than assumed to have survived training.
+                    blank = qformer_module.context.tokenize(
+                        tokenizer, [NO_INDICATION] * ct.shape[0],
+                        ctx_cfg.max_ind_len, device)
+                    b2 = qformer_module.context(
+                        blank["input_ids"], blank["attention_mask"],
+                        ctx["age_band"].to(device), ctx["sex"].to(device))
+                    o2 = qformer_module(feat_map, masks_fine, has_masks_d,
+                                        context=b2, return_parts=True)
+                    if not torch.equal(out.z_gen, o2.z_gen):
+                        raise RuntimeError(
+                            "Z_gen moved with the indication: max|d|="
+                            f"{(out.z_gen - o2.z_gen).abs().max():.3e}")
+            elif qformer_module is not None:
                 if use_anatomy_qformer:
                     masks_fine = masks_fine.to(device, non_blocking=True)
                     has_masks_d = has_masks.to(device, non_blocking=True)
@@ -429,10 +478,27 @@ def run_validation(clip, tokenizer, device, val_loader, qformer_module=None, use
     clip.train()
     if qformer_module is not None:
         qformer_module.train()
+    if empty_n:
+        print(f"[RAC] empty-region rate over the whole validation pass: "
+              f"{empty_sum / empty_n:.4f} ({int(empty_sum):,}/{int(empty_n):,} "
+              "slot-samples)", flush=True)
     pred = np.concatenate(all_pred)
     true = np.concatenate(all_true)
     aucs = per_class_auc(pred, true)
     return float(np.nanmean(list(aucs.values()))), aucs
+
+
+def _fusion_ratio(qformer_module) -> float:
+    """||W_ind|| / ||W_gen||: how much of the fusion the conditioned path has taken.
+
+    Reported every LOG_EVERY because it is the single number that says whether
+    the conditioned half is contributing or running away. It starts at exactly 0
+    -- the right block is initialised to zeros.
+    """
+    W = qformer_module.fusion.weight
+    d = W.shape[1] // 2
+    gen = float(W[:, :d].norm())
+    return float(W[:, d:].norm()) / max(gen, 1e-8)
 
 
 def lr_lambda(update):
@@ -501,6 +567,7 @@ def main():
         limit=TRAIN_LIMIT,
         fail_fast=FAIL_FAST,
         volume_list_path=os.environ.get("RAC_VOLUME_LIST_TRAIN", ""),
+        volume_exclude_path=os.environ.get("RAC_VOLUME_EXCLUDE", ""),
     )
     val_ds = RACDatasetV4(
         DATA_VALID,
@@ -511,6 +578,7 @@ def main():
         limit=VAL_LIMIT,
         fail_fast=FAIL_FAST,
         volume_list_path=os.environ.get("RAC_VOLUME_LIST_VALID", ""),
+        volume_exclude_path=os.environ.get("RAC_VOLUME_EXCLUDE", ""),
     )
     train_loader = DataLoader(
         train_ds,
@@ -520,7 +588,12 @@ def main():
         collate_fn=rac_collate,
         drop_last=True,
         pin_memory=True,
-        persistent_workers=NUM_WORKERS > 0,
+        # persistent_workers keeps a COPY of the dataset in each worker, so
+        # set_epoch() would never reach them and the indication-dropout mask
+        # would be frozen for the whole run: a fixed 30% of volumes that never
+        # see their indication, which is a different and worse experiment than
+        # 30% resampled per epoch.
+        persistent_workers=(NUM_WORKERS > 0 and not USE_CONTEXT_QFORMER),
         **_loader_kwargs(),
     )
     val_loader = DataLoader(val_ds, batch_size=8, shuffle=False, num_workers=4, collate_fn=rac_collate, pin_memory=True, **_loader_kwargs())
@@ -531,7 +604,33 @@ def main():
     if USE_TOPK_POOL:
         print(f"[RAC] Variant A TopK pool ENABLED: k={TOPK_K} focal_classes={sorted(FOCAL_CLASSES)}")
     qformer_module = None
-    if USE_QFORMER or USE_ANATOMY_QFORMER:
+    ctx_layout = None
+    if USE_CONTEXT_QFORMER:
+        # Built here, AFTER the seeding at import time and in the same position
+        # in the RNG stream that AnatomyQFormer occupied, so qformer.queries
+        # draws the same numbers as the reference run. Constructing any new
+        # module *before* this point shifts the stream and silently changes the
+        # initial query bank.
+        anatomy_labels = list(range(1, 11))
+        pathology_labels = [PATHOLOGY_FINE_ORGANS[name] for name in PATHOLOGIES]
+        ctx_layout = SlotLayout.phase1(n_path=len(pathology_labels),
+                                       n_anatomy=len(anatomy_labels))
+        if QFORMER_NUM_QUERIES != ctx_layout.n_gen:
+            raise RuntimeError(
+                f"RAC_QFORMER_QUERIES={QFORMER_NUM_QUERIES} but the unconditioned "
+                f"bank is {ctx_layout.n_gen} slots; the warm-start checkpoint and "
+                "the step-0 identity both depend on these matching")
+        qformer_module = ContextQFormer(
+            anatomy_labels=anatomy_labels,
+            pathology_labels=pathology_labels,
+            layout=ctx_layout, cfg=CTX_CFG,
+            dim=QFORMER_DIM, depth=QFORMER_DEPTH, num_heads=QFORMER_HEADS,
+            image_dim=RACImageEncoder.FEAT_DIM,
+        ).to(device)
+        print(f"[RAC] Context Q-Former ENABLED: {ctx_layout.describe()} "
+              f"c1={CTX_CFG.c1} c2={CTX_CFG.c2} selfattn={CTX_CFG.selfattn} "
+              f"zind={CTX_CFG.zind_combine} dropout={CTX_CFG.ind_dropout}")
+    elif USE_QFORMER or USE_ANATOMY_QFORMER:
         if USE_ANATOMY_QFORMER:
             # Map FINE_LABEL_NAMES ids 1..10 onto the anatomy queries; the
             # 18 pathology queries follow PATHOLOGIES order.
@@ -559,19 +658,53 @@ def main():
                 pool=QFORMER_POOL,
             ).to(device)
             print(f"[RAC] Path 1 Q-Former ENABLED: queries={QFORMER_NUM_QUERIES} depth={QFORMER_DEPTH}")
+
+    # Shared tail: registration, param groups, and -- for the context bank --
+    # the split into inherited and new parameters.
+    ctx_params: list = []
+    if qformer_module is not None:
         for p in qformer_module.parameters():
             p.requires_grad = True
-        trainable.extend(list(qformer_module.parameters()))
-        _group = {
-            "params": list(qformer_module.parameters()),
-            "lr": VISION_LR,
-            "weight_decay": WEIGHT_DECAY,
-        }
-        if DEFER_OPT_BUILD:
-            extra_groups.append(_group)
+        qf_params = list(qformer_module.parameters())
+        groups_to_add = []
+        if USE_CONTEXT_QFORMER:
+            # The new modules produce ZERO output at step 0 but NOT zero
+            # gradient: dL/dg_x = <a, dL/dq> is nonzero, and so is dL/dW_right.
+            # Under a single global clip_grad_norm_ their contribution inflates
+            # the total norm, so every inherited parameter takes a SMALLER step
+            # than the reference run from update 1 onwards. The forward identity
+            # survives that; the trajectory does not. Clipping the two sets
+            # separately is what keeps "step 0 is ARC-CT" from decaying into
+            # "step 0 is ARC-CT and then something slower".
+            ctx_mods = [qformer_module.context, qformer_module.conditioner,
+                        qformer_module.relevance, qformer_module.fusion]
+            ctx_ids = {id(p) for m in ctx_mods for p in m.parameters()}
+            ctx_params = [p for p in qf_params if id(p) in ctx_ids]
+            inherited = [p for p in qf_params if id(p) not in ctx_ids]
+            # e_int carries 10x weight decay: the interaction table starts at
+            # exactly zero and should stay there unless it pays for itself.
+            e_int_id = {id(qformer_module.context.e_int)}
+            groups_to_add.append({"params": inherited, "lr": VISION_LR,
+                                  "weight_decay": WEIGHT_DECAY})
+            groups_to_add.append({"params": [p for p in ctx_params if id(p) not in e_int_id],
+                                  "lr": VISION_LR, "weight_decay": WEIGHT_DECAY})
+            groups_to_add.append({"params": [qformer_module.context.e_int],
+                                  "lr": VISION_LR, "weight_decay": WEIGHT_DECAY * 10.0})
+            print(f"[RAC] Q-Former params: inherited {sum(p.numel() for p in inherited):,} "
+                  f"| context {sum(p.numel() for p in ctx_params):,} "
+                  f"(clipped separately)")
         else:
-            optimizer.add_param_group(_group)
-        n_qf = sum(p.numel() for p in qformer_module.parameters())
+            groups_to_add.append({"params": qf_params, "lr": VISION_LR,
+                                  "weight_decay": WEIGHT_DECAY})
+        trainable.extend(qf_params)
+        for _group in groups_to_add:
+            if not _group["params"]:
+                continue
+            if DEFER_OPT_BUILD:
+                extra_groups.append(_group)
+            else:
+                optimizer.add_param_group(_group)
+        n_qf = sum(p.numel() for p in qf_params)
         print(f"[RAC] Q-Former trainable params: {n_qf:,}")
 
     if DEFER_OPT_BUILD:
@@ -637,13 +770,20 @@ def main():
                 qsd = pkg["qformer_module"]
                 qrows = qsd.get("qformer.queries")
                 want = qformer_module.qformer.queries.shape
-                if qrows is not None and tuple(qrows.shape) != tuple(want):
-                    raise RuntimeError(
-                        f"[RAC] Q-Former query shape {tuple(qrows.shape)} in {warm} "
-                        f"does not match the model's {tuple(want)}. Remap the "
-                        f"checkpoint (scripts/remap_ckpt_schema.py) or fix "
-                        f"RAC_QFORMER_QUERIES / RAC_SCHEMA.")
-                qm, qu = qformer_module.load_state_dict(qsd, strict=False)
+                if USE_CONTEXT_QFORMER:
+                    # A 39-row ARC-CT bank maps onto the 40-row context bank by
+                    # appending one row: the conditioned pathology slots are the
+                    # SAME parameters read twice, so Phase 1 adds exactly one new
+                    # query. No external remap script is involved.
+                    qm, qu = qformer_module.load_arcct_state_dict(qsd)
+                else:
+                    if qrows is not None and tuple(qrows.shape) != tuple(want):
+                        raise RuntimeError(
+                            f"[RAC] Q-Former query shape {tuple(qrows.shape)} in {warm} "
+                            f"does not match the model's {tuple(want)}. Remap the "
+                            f"checkpoint (tools/remap_ckpt_schema.py) or fix "
+                            f"RAC_QFORMER_QUERIES / RAC_SCHEMA.")
+                    qm, qu = qformer_module.load_state_dict(qsd, strict=False)
                 print(f"[RAC] Warm-started Q-Former from {warm}: "
                       f"queries={tuple(qrows.shape) if qrows is not None else None} "
                       f"missing={len(qm)} unexpected={len(qu)}", flush=True)
@@ -682,6 +822,12 @@ def main():
                     "lora_r": LORA_R,
                     "lora_alpha": LORA_ALPHA,
                     "organ_labels": ORGAN_LABELS,
+                    # Written so evaluate.py never has to infer the bank shape
+                    # from the tensor: a 40-row context bank and a 3-global
+                    # AnatomyQFormer have identical shapes, and guessing between
+                    # them evaluates the wrong model with no error at all.
+                    **({"query_layout": qformer_module.query_layout()}
+                       if USE_CONTEXT_QFORMER and qformer_module is not None else {}),
                 },
             },
             f"{RESULTS_DIR}/{name}.pt",
@@ -691,7 +837,18 @@ def main():
     train_iter = iter(train_loader)
     optimizer.zero_grad(set_to_none=True)
     pos_embs, neg_embs = encode_prompts(clip, tokenizer, device)
-    log = {"clip": 0.0, "cls": 0.0, "align": 0.0, "ptok": 0.0, "n": 0.0, "mask": 0.0}
+    if USE_CONTEXT_QFORMER and qformer_module is not None:
+        # The relevance head compares indication text against class-prompt text,
+        # so BOTH sides come from the frozen indication tower rather than from
+        # the trained visual-alignment projection. That makes these embeddings a
+        # constant of the run -- unlike pos_embs, which is re-encoded every
+        # PROMPT_CACHE_EVERY updates as the text LoRA drifts -- so this is
+        # installed once here and never goes stale on resume.
+        qformer_module.relevance.set_class_embeddings(
+            qformer_module.context.encode_class_prompts(tokenizer, list(PATHOLOGIES)))
+        print(f"[RAC] relevance class embeddings installed: "
+              f"{tuple(qformer_module.relevance.class_emb.shape)} (frozen basis)")
+    log = {"clip": 0.0, "cls": 0.0, "align": 0.0, "ptok": 0.0, "ptok_ind": 0.0, "cf": 0.0, "n": 0.0, "mask": 0.0}
     stop_early = False
     t0 = time.time()
     pbar = tqdm.tqdm(initial=update_step, total=TOTAL_UPDATES, desc="RAC-updates")
@@ -700,6 +857,9 @@ def main():
         try:
             ct, texts, findings, labels, masks_fine, has_masks, accessions, ctx = next(train_iter)
         except StopIteration:
+            # One pass finished. Advancing the epoch is what re-rolls the
+            # indication dropout; see set_epoch().
+            train_ds.set_epoch(getattr(train_ds, "epoch", 0) + 1)
             train_iter = iter(train_loader)
             ct, texts, findings, labels, masks_fine, has_masks, accessions, ctx = next(train_iter)
 
@@ -711,7 +871,18 @@ def main():
         with amp_context(device):
             feat_map = clip.visual_transformer.forward_spatial(ct)
             qf_tokens = None
-            if qformer_module is not None:
+            ctx_out = None
+            if USE_CONTEXT_QFORMER and qformer_module is not None:
+                ctx_tok = qformer_module.context.tokenize(
+                    tokenizer, ctx["indication"], CTX_CFG.max_ind_len, device)
+                ctx_bundle = qformer_module.context(
+                    ctx_tok["input_ids"], ctx_tok["attention_mask"],
+                    ctx["age_band"].to(device), ctx["sex"].to(device))
+                ctx_out = qformer_module(
+                    feat_map, masks_fine, has_masks, context=ctx_bundle,
+                    return_parts=True)
+                img_lat, qf_tokens = ctx_out.z_final, ctx_out.tokens
+            elif qformer_module is not None:
                 if USE_ANATOMY_QFORMER:
                     # Anatomy-Bound Q-Former needs the TS mask + has_mask flags.
                     img_lat, qf_tokens = qformer_module(
@@ -732,11 +903,15 @@ def main():
 
             loss_align = torch.tensor(0.0, device=device)
             loss_pertoken = torch.tensor(0.0, device=device)
-            if (PERTOKEN_NCE_WEIGHT > 0.0 and USE_ANATOMY_QFORMER
-                    and qf_tokens is not None and qformer_module is not None):
-                A_q = len(qformer_module.anatomy_labels)
-                P_q = len(qformer_module.pathology_labels)
-                path_tokens = qf_tokens[:, A_q:A_q + P_q, :]
+            loss_ptok_ind = torch.tensor(0.0, device=device)
+            loss_cf = torch.tensor(0.0, device=device)
+
+            def _pertoken_terms(path_tokens):
+                """Per (sample, class) cross-entropy against pos/neg prompts.
+
+                Returns the per-cell loss and its labelled mask, so a caller can
+                either average it (the inherited term) or weight it (C2).
+                """
                 path_lat = F.normalize(path_tokens, dim=-1)
                 sims_pos = (path_lat * pos_embs.unsqueeze(0)).sum(dim=-1)
                 sims_neg = (path_lat * neg_embs.unsqueeze(0)).sum(dim=-1)
@@ -749,8 +924,36 @@ def main():
                 _m_pt = torch.isfinite(_lab_pt)
                 _lab_pt = torch.nan_to_num(_lab_pt, nan=0.0)
                 target_pt = torch.stack([_lab_pt, 1.0 - _lab_pt], dim=-1)
-                _per_pt = -(target_pt * log_p_pt).sum(dim=-1)
+                return -(target_pt * log_p_pt).sum(dim=-1), _m_pt
+
+            if (PERTOKEN_NCE_WEIGHT > 0.0 and qf_tokens is not None
+                    and qformer_module is not None
+                    and (USE_ANATOMY_QFORMER or USE_CONTEXT_QFORMER)):
+                if USE_CONTEXT_QFORMER:
+                    # Named access, not arithmetic. With the unconditioned-first
+                    # layout qf_tokens[:, A:A+P] still happens to land on the
+                    # general bank, but that is a coincidence of the slot order
+                    # rather than a statement of intent.
+                    gen_tok = qf_tokens.index_select(1, qformer_module.path_gen_index)
+                else:
+                    A_q = len(qformer_module.anatomy_labels)
+                    P_q = len(qformer_module.pathology_labels)
+                    gen_tok = qf_tokens[:, A_q:A_q + P_q, :]
+                _per_pt, _m_pt = _pertoken_terms(gen_tok)
+                # The UNCONDITIONED bank keeps ARC-CT's unweighted loss. The
+                # adult gate and the step-0 story both rest on this term being
+                # numerically what it was before.
                 loss_pertoken = (_per_pt * _m_pt).sum() / _m_pt.sum().clamp(min=1)
+
+                if USE_CONTEXT_QFORMER and CTX_PTOK_WEIGHT > 0.0 and ctx_out is not None:
+                    cond_tok = qf_tokens.index_select(1, qformer_module.path_cond_index)
+                    _per_c, _m_c = _pertoken_terms(cond_tok)
+                    w_c = ctx_out.w.to(_per_c.dtype) * _m_c
+                    # Normalised by sum(w): un-normalised, every per-class loss
+                    # is >= 0 so dL/dbeta > 0 always and beta is driven to its
+                    # floor from step 1.
+                    loss_ptok_ind = ((w_c * _per_c).sum(dim=-1)
+                                     / w_c.sum(dim=-1).clamp(min=1e-6)).mean()
             n_masked = int(has_masks.sum().item())
             if n_masked > 0 and ORGAN_LABELS:
                 midx = has_masks.nonzero(as_tuple=True)[0]
@@ -808,9 +1011,42 @@ def main():
                 # AnTS-HardNeg term (env-gated). Operates on the SAME region
                 # pools as region_align, plus a per-class text bank and
                 # FaNe-reweighted within-batch visual hard negatives.
+            # -- counterfactual consistency, on the PREDICTIONS -------------
+            # Isolation proves dZ_gen/dI = 0, but says nothing about Z_final:
+            # the right block of the fusion is unconstrained after step 0 and
+            # Z_ind depends entirely on the indication. The safety claim is
+            # about the prediction -- "the pneumothorax must not disappear
+            # because the scan was ordered for pneumonia" -- so the penalty
+            # belongs on the logits of the classes this indication considers
+            # irrelevant, not on Z_gen where it would be identically zero.
+            if (USE_CONTEXT_QFORMER and CF_WEIGHT > 0.0 and ctx_out is not None
+                    and any(ctx["indication_cf"])):
+                cf_idx = [i for i, t in enumerate(ctx["indication_cf"]) if t]
+                if cf_idx:
+                    sel = torch.tensor(cf_idx, device=device)
+                    cf_txt = [ctx["indication_cf"][i] for i in cf_idx]
+                    cf_tok = qformer_module.context.tokenize(
+                        tokenizer, cf_txt, CTX_CFG.max_ind_len, device)
+                    cf_bundle = qformer_module.context(
+                        cf_tok["input_ids"], cf_tok["attention_mask"],
+                        ctx["age_band"].to(device)[sel], ctx["sex"].to(device)[sel])
+                    # feat_map is REUSED: the image did not change, only H_C did.
+                    # Re-running forward_spatial would double the step cost for
+                    # an identical tensor.
+                    cf_out = qformer_module(
+                        feat_map[sel], masks_fine[sel], has_masks[sel],
+                        context=cf_bundle, return_parts=True)
+                    p_true = prompt_probs(img_lat[sel], pos_embs, neg_embs, temp_now)
+                    p_cf = prompt_probs(cf_out.z_final, pos_embs, neg_embs, temp_now)
+                    low = (ctx_out.r[sel] < CF_TAU).to(p_true.dtype)
+                    loss_cf = ((p_true - p_cf).pow(2) * low).sum(dim=-1).div(
+                        low.sum(dim=-1).clamp(min=1.0)).mean()
+
             total = (CLIP_WEIGHT * loss_clip + CLS_WEIGHT * loss_cls
                      + ALIGN_WEIGHT * loss_align
-                     + PERTOKEN_NCE_WEIGHT * loss_pertoken)
+                     + PERTOKEN_NCE_WEIGHT * loss_pertoken
+                     + CTX_PTOK_WEIGHT * loss_ptok_ind
+                     + CF_WEIGHT * loss_cf)
             total_to_backprop = total / ACCUM_STEPS
 
         if scaler.is_enabled():
@@ -823,6 +1059,8 @@ def main():
         log["cls"] += float(loss_cls.detach().cpu())
         log["align"] += float(loss_align.detach().cpu())
         log["ptok"] += float(loss_pertoken.detach().cpu()) if isinstance(loss_pertoken, torch.Tensor) else 0.0
+        log["ptok_ind"] += float(loss_ptok_ind.detach().cpu())
+        log["cf"] += float(loss_cf.detach().cpu())
         log["mask"] += n_masked
         log["n"] += 1
 
@@ -831,7 +1069,18 @@ def main():
 
         if scaler.is_enabled():
             scaler.unscale_(optimizer)
-        nn.utils.clip_grad_norm_(trainable, MAX_GRAD_NORM)
+        if ctx_params:
+            # Two clips, not one. The context modules emit zero at step 0 but
+            # NOT zero gradient, so a single global norm would be inflated by
+            # parameters that contribute nothing to the output -- and every
+            # inherited parameter would then take a smaller step than the
+            # reference run from update 1.
+            _ctx_ids = {id(p) for p in ctx_params}
+            nn.utils.clip_grad_norm_([p for p in trainable if id(p) not in _ctx_ids],
+                                     MAX_GRAD_NORM)
+            nn.utils.clip_grad_norm_(ctx_params, MAX_GRAD_NORM)
+        else:
+            nn.utils.clip_grad_norm_(trainable, MAX_GRAD_NORM)
         if scaler.is_enabled():
             scaler.step(optimizer)
             scaler.update()
@@ -858,17 +1107,23 @@ def main():
                 f"[RAC] update={update_step:5d} micro={micro_step:7d} "
                 f"clip={log['clip']/denom:.4f} cls={log['cls']/denom:.4f} "
                 f"align={log['align']/denom:.4f} ptok={log['ptok']/denom:.4f} "
+                + (f"ptok_ind={log['ptok_ind']/denom:.4f} cf={log['cf']/denom:.4f} "
+                   f"beta={float(qformer_module.relevance.beta):.4f} "
+                   f"|Wi|/|Wg|={_fusion_ratio(qformer_module):.3f} "
+                   if USE_CONTEXT_QFORMER and qformer_module is not None else "") +
                 f"masked/batch={log['mask']/denom:.2f} "
                 f"lr={lr_vision:.2e}/{lr_text:.2e} t={(time.time()-t0)/60:.1f}m",
                 flush=True,
             )
-            log = {"clip": 0.0, "cls": 0.0, "align": 0.0, "ptok": 0.0, "n": 0.0, "mask": 0.0}  # noqa: E501
+            log = {"clip": 0.0, "cls": 0.0, "align": 0.0, "ptok": 0.0, "ptok_ind": 0.0, "cf": 0.0, "n": 0.0, "mask": 0.0}  # noqa: E501
 
         if update_step % VAL_EVERY == 0:
             mean_auc, per_auc = run_validation(
                 clip, tokenizer, device, val_loader,
                 qformer_module=qformer_module,
                 use_anatomy_qformer=USE_ANATOMY_QFORMER,
+                use_context=USE_CONTEXT_QFORMER, ctx_cfg=CTX_CFG,
+                assert_invariance=CTX_CFG.assert_invariance,
             )
             pos_embs, neg_embs = encode_prompts(clip, tokenizer, device)
             # Report how often each anatomy query actually had a region to attend to.
