@@ -234,6 +234,19 @@ def normalise(text: str) -> str:
     return t.strip()
 
 
+def _flatten(t: str) -> str:
+    """One indication, one line.
+
+    normalise() keeps single newlines, which is right for a report blob and
+    wrong for this field: a multi-line indication becomes several lines in the
+    review sample, and a reviewer scanning for a surviving name reads the
+    continuation lines as separate un-tagged records. 200 of 20,832 rows were
+    affected. Collapsing here rather than in normalise() leaves the report path
+    untouched.
+    """
+    return re.sub(r"\s+", " ", t).strip()
+
+
 VACUOUS = re.compile(r"^\s*(not\s+given|none|n/?a|nil|unknown|-{1,3}|\.)\s*\.?\s*$", re.I)
 
 
@@ -336,7 +349,7 @@ def scrub(text: str, row: RowPHI, pool: NamePool, vocab: frozenset,
         hits["L6_truncated"] += 1
     # collapse runs of identical placeholders left behind by overlapping rules
     t = re.sub(r"(\[(?:NAME|DATE|ID|SITE|CONTACT|LOC)\])(?:[\s,]*\1)+", r"\1", t)
-    return ScrubResult(_WS.sub(" ", t).strip(), hits, truncated)
+    return ScrubResult(_flatten(t), hits, truncated)
 
 
 def scrub_structural(text: str, max_words: int = 64,
@@ -385,7 +398,7 @@ def scrub_structural(text: str, max_words: int = 64,
     if truncated:
         hits["L6_truncated"] += 1
     t = re.sub(r"(\[(?:NAME|DATE|ID|SITE|CONTACT|LOC)\])(?:[\s,]*\1)+", r"\1", t)
-    return ScrubResult(_WS.sub(" ", t).strip(), hits, truncated)
+    return ScrubResult(_flatten(t), hits, truncated)
 
 
 def _date_renderings(raw: str) -> list[str]:
