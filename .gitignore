@@ -3,3 +3,4 @@ __pycache__/
 
 # Pasted screenshots, not part of the figure source
 pipeline/pipeline_figures/*.png
+.cache/
