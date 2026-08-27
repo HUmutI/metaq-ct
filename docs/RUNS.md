@@ -98,3 +98,10 @@ sees has to hold BOTH cohorts, so the winning configuration is retrained on the
 | `peds_finetune`, `peds_finetune_v1_seed1`, `_seed2` | the V1 recipe at three seeds — this is where the seed band sigma comes from |
 | `peds_finetune_v2` … `v5` | earlier pediatric recipe iterations |
 | `combined_16k`, `combined_47k`, `combined_47k_harmonised` | joint peds+CT-RATE training; `c47harm` is the current best joint model and the thing a new joint run must beat |
+
+---
+
+**Superseded by the ledger.** `docs/EXPERIMENTS.md` now records every experiment --
+this file's ctx runs included -- and is generated from `docs/experiments.yaml` by
+`tools/exp_log.py`, so its figures cannot drift from the runs. What stays here is
+the narrative of how the ctx tags came about; the numbers live there.

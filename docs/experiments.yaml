@@ -1,0 +1,468 @@
+# The experiment registry. Meaning lives here; NUMBERS DO NOT.
+#
+# Every AUC in docs/EXPERIMENTS.md is read off disk by tools/exp_log.py at render
+# time. Do not write results into this file -- a transcribed number goes stale the
+# next time a run improves, and it goes stale invisibly, because the document
+# around it still looks authoritative.
+#
+# What belongs here is what a directory listing cannot tell you: why a run was
+# launched, which architecture it belongs to, what it settled, and what is queued
+# but not yet started.
+#
+# WHEN YOU START AN EXPERIMENT, ADD IT HERE FIRST, with status: queued. Then
+# `python tools/exp_log.py --check` exits non-zero on any run directory the ledger
+# has never heard of, which is the one failure this file exists to prevent.
+#
+# Fields:
+#   id        short handle used in conversation
+#   group     which section it renders under
+#   arch      ARC-CT (published) | context (indication + age + sex)
+#   cohort    what it trained on;  classes: the label schema
+#   masks     anatomy-mask coverage during TRAINING
+#   runs      run directory names under $RAC_WORK/runs
+#   evals     "<cohort>/<cell>" under $RAC_WORK/eval_matrix
+#   patience, val_every
+#             early-stopping config. Their product is the earliest update at which
+#             stopping could fire; a quiet run below it was killed, not converged,
+#             and is excluded from the mean instead of dragging it down.
+#   status    queued | planned  (otherwise derived from disk)
+#   finding   what the experiment settled, in prose
+
+architectures:
+  ARC-CT: >-
+    The published model (MICCAI 2026 TIA). R3D-18 pretrained on Kinetics, layer4
+    feature map [B,512,12,12,12], AnatomyQFormer with 39 queries (10 anatomy, 27
+    pathology, 2 global), CLIP-contrastive against a frozen CXR-BERT with LoRA on
+    layers 8-11. The image is the only input. Every number under this heading is a
+    baseline, never a result of the new work.
+  context: >-
+    The new model. The same tower, and queries[:39] load bit-identical from the
+    ARC-CT checkpoint, plus ONE new parameter row (clinical global) read out over
+    67 slots: 27 of them are the pathology queries re-read after conditioning on
+    the indication (C1: cross-attention then FiLM), and pooling is steered by a
+    relevance weight that can only ever raise, never suppress (C2: w = 1 + beta*r).
+    Age band and sex enter as context tokens. At initialisation it is numerically
+    the published model, so every delta reads as departure from ARC-CT.
+
+groups:
+  - id: arcct_peds
+    title: "ARC-CT: pediatric fine-tuning (V-series)"
+    note: >-
+      Recipe search on the 8,816-volume BCH cohort, warm-started from the published
+      adult checkpoint and re-headed to the 27-class pediatric schema. V1 is the
+      recipe everything since is measured against; V5 is the best of the search.
+      The three V1 seeds are also where the seed band comes from.
+  - id: arcct_combined
+    title: "ARC-CT: joint pediatric + CT-RATE (C-series)"
+    note: >-
+      The same architecture trained on both cohorts together, testing whether adult
+      volume helps the pediatric half and what the label harmonisation costs.
+      "mix" = each cohort keeps its own labeller; "harm" = one labeller for both.
+  - id: phase0
+    title: "Phase 0: does anatomy routing cost accuracy, and is that pediatric?"
+    note: >-
+      Not training runs -- the same checkpoints evaluated twice, once pooling
+      globally and once through the anatomy masks. The question is whether the
+      routing penalty in the pediatric cohort is a property of children or of the
+      method. A cell whose routed column reads "no mask" had no mask supplied and
+      fell back to global; it is not a routed measurement.
+  - id: ctx1
+    title: "Context ladder, first pass (ctx)"
+    note: >-
+      Eight rungs x three seeds on pediatrics alone, adding one mechanism at a
+      time. This pass is superseded: beta was initialised at -6, where
+      d(beta)/db = sigma(-6) = 0.0025, so the relevance gate could not open within
+      the run -- measured +0.00012 against a predicted +0.000100. The C2 rung here
+      is therefore not a test of C2. Kept because the C1 rungs are unaffected.
+  - id: ctx2
+    title: "Context ladder, second pass (ctx2)"
+    note: >-
+      The rerun with beta_init -2, a 20x learning-rate multiplier on the zero-init
+      context modules, and patience 8. This is the pass that picks the winner for
+      the joint runs.
+  - id: joint
+    title: "Joint context runs (the headline)"
+    note: >-
+      The winning rung retrained on the combined 49,545-volume split, alongside
+      ct_only on the SAME split. The joint baseline is not redundant: CT-RATE
+      outnumbers pediatrics six to one there, and a configuration that wins on
+      7,001 pediatric volumes is not thereby a winner in that regime.
+  - id: ctx3
+    title: "Masked ablation (ctx3)"
+    note: >-
+      The winner rerun with anatomy masks on the adult half too. Held separate from
+      the ctx2 ladder on purpose: switching masks on at the same time as C1/C2
+      would make the gain unattributable.
+
+experiments:
+  # ------------------------------------------------------- ARC-CT pediatric
+  - id: V1
+    group: arcct_peds
+    arch: ARC-CT
+    cohort: peds 7,001
+    classes: 27
+    masks: peds 100%
+    runs: [peds_finetune, peds_finetune_v1_seed1, peds_finetune_v1_seed2]
+    evals: [peds/V1, ctrate/V1, ctrate/V1_masked, combined/V1]
+    patience: 5
+    val_every: 400
+    finding: >-
+      The reference recipe, and the source of the seed band: three seeds of an
+      identical configuration give sd = 0.0046, so a ladder delta below about
+      0.0092 is inside seed noise and is not a difference. Every ablation in this
+      project is read against that number.
+  - id: V2
+    group: arcct_peds
+    arch: ARC-CT
+    cohort: peds 7,001
+    classes: 27
+    masks: peds 100%
+    runs: [peds_finetune_v2]
+    evals: [peds/V2, ctrate/V2, combined/V2]
+    patience: 5
+    val_every: 400
+  - id: V3
+    group: arcct_peds
+    arch: ARC-CT
+    cohort: peds 7,001
+    classes: 27
+    masks: peds 100%
+    runs: [peds_finetune_v3]
+    evals: [peds/V3, ctrate/V3, combined/V3]
+    patience: 5
+    val_every: 400
+  - id: V4
+    group: arcct_peds
+    arch: ARC-CT
+    cohort: peds 7,001
+    classes: 27
+    masks: peds 100%
+    runs: [peds_finetune_v4]
+    evals: [peds/V4, ctrate/V4, combined/V4]
+    patience: 5
+    val_every: 400
+  - id: V5
+    group: arcct_peds
+    arch: ARC-CT
+    cohort: peds 7,001
+    classes: 27
+    masks: peds 100%
+    runs: [peds_finetune_v5]
+    evals: [peds/V5, ctrate/V5, ctrate/V5_masked, combined/V5]
+    patience: 5
+    val_every: 400
+    finding: >-
+      Best pediatric held-out AUC of the recipe search, and the checkpoint the
+      age-stratified analysis runs on. Its lead over V1 on pediatrics is inside
+      the 0.0046 seed band, so it is the better recipe by selection, not by a
+      demonstrated margin.
+
+  # ------------------------------------------------------- ARC-CT combined
+  - id: C16
+    group: arcct_combined
+    arch: ARC-CT
+    cohort: peds + CT-RATE 16k
+    classes: 27
+    masks: peds only
+    runs: [combined_16k]
+    evals: [peds/C16, ctrate/C16, combined/C16]
+    patience: 5
+    val_every: 400
+  - id: C47mix
+    group: arcct_combined
+    arch: ARC-CT
+    cohort: peds + CT-RATE 47k
+    classes: 27
+    masks: peds only
+    runs: [combined_47k]
+    evals: [peds/C47mix, ctrate/C47mix, ctrate/C47mix_masked, combined/C47mix_mixlbl, combined/C47mix_harmlbl]
+    patience: 5
+    val_every: 400
+    finding: >-
+      The strongest held-out numbers in the project, and the reason the joint split
+      is where the new model has to be shown: adult volume lifts the pediatric half
+      too. Each cohort keeps its own labeller here, which is also its weakness --
+      see C47harm.
+  - id: C47harm
+    group: arcct_combined
+    arch: ARC-CT
+    cohort: peds + CT-RATE 47k
+    classes: 27
+    masks: peds only
+    runs: [combined_47k_harmonised]
+    evals: [peds/C47harm, ctrate/C47harm, ctrate/C47harm_masked, combined/C47harm_harmlbl, combined/C47harm_mixlbl]
+    patience: 5
+    val_every: 400
+    finding: >-
+      One labeller across both cohorts. It scores below C47mix, and that gap is
+      partly the price of removing an artefact rather than a loss of signal: with
+      two labellers the same class carried two thresholds across the halves --
+      Lymphadenopathy 25.9% adult against 7.9% pediatric, of which 10.8 points were
+      the annotator and not the disease. The harmonised labels are what the context
+      runs train on; the PUBLISHED CT-RATE labels stay the adult evaluation target.
+
+  # ------------------------------------------------------------- phase 0
+  - id: P0_routing
+    group: phase0
+    arch: ARC-CT
+    cohort: eval only
+    classes: 27
+    masks: eval-time
+    runs: []
+    evals: [ctrate/V1_masked, ctrate/V5_masked, ctrate/C47mix_masked, ctrate/C47harm_masked, peds/V1, peds/V5, combined/V1, combined/V5]
+    status: planned
+    finding: >-
+      Settled the question the next paper was built on. Routing the read-out
+      through the anatomy masks costs accuracy in BOTH cohorts and by nearly the
+      same amount -- on the same checkpoint and the same 27 classes, CT-RATE falls
+      0.7991 to 0.7617 (-0.0375) and pediatrics 0.8005 to 0.7651 (-0.0354), with a
+      per-class correlation of r = +0.908. The penalty is a property of the method,
+      not of children. The two biggest losers, Pneumothorax (-0.378) and Bone
+      lesion (-0.269), route to the two regions we derived rather than segmented.
+      One loose end: ctrate/V1 reads 0.7954 against ctrate/V1_masked's 0.7991 on
+      the same checkpoint, labels and order -- config drift between two evaluation
+      runs, unexplained, and it does not touch the paired -0.0375.
+
+  # ---------------------------------------------------------- context ctx
+  - id: ctx/ct_only
+    group: ctx1
+    arch: context
+    cohort: peds 7,001
+    classes: 27
+    masks: peds 100%
+    runs: [ctx_ct_only_seed0, ctx_ct_only_seed1, ctx_ct_only_seed2]
+    patience: 5
+    val_every: 400
+  - id: ctx/concat
+    group: ctx1
+    arch: context
+    cohort: peds 7,001
+    classes: 27
+    masks: peds 100%
+    runs: [ctx_concat_seed0, ctx_concat_seed1, ctx_concat_seed2]
+    patience: 5
+    val_every: 400
+  - id: ctx/c1_xattn
+    group: ctx1
+    arch: context
+    cohort: peds 7,001
+    classes: 27
+    masks: peds 100%
+    runs: [ctx_c1_xattn_seed0, ctx_c1_xattn_seed1, ctx_c1_xattn_seed2]
+    patience: 5
+    val_every: 400
+  - id: ctx/c1_full
+    group: ctx1
+    arch: context
+    cohort: peds 7,001
+    classes: 27
+    masks: peds 100%
+    runs: [ctx_c1_full_seed0, ctx_c1_full_seed1, ctx_c1_full_seed2]
+    patience: 5
+    val_every: 400
+  - id: ctx/c2
+    group: ctx1
+    arch: context
+    cohort: peds 7,001
+    classes: 27
+    masks: peds 100%
+    runs: [ctx_c2_seed0, ctx_c2_seed1, ctx_c2_seed2]
+    patience: 5
+    val_every: 400
+    finding: >-
+      Not a test of C2. beta was initialised at -6, where the softplus gradient is
+      sigma(-6) = 0.0025; over the whole run beta moved by a measured 0.00012
+      against a predicted 0.000100, so the relevance gate never opened and this
+      rung is C1 with an inert head attached. The rerun is ctx2/c2.
+  - id: ctx/fusion_gated
+    group: ctx1
+    arch: context
+    cohort: peds 7,001
+    classes: 27
+    masks: peds 100%
+    runs: [ctx_fusion_gated_seed0, ctx_fusion_gated_seed1, ctx_fusion_gated_seed2]
+    patience: 5
+    val_every: 400
+  - id: ctx/isolation_off
+    group: ctx1
+    arch: context
+    cohort: peds 7,001
+    classes: 27
+    masks: peds 100%
+    runs: [ctx_isolation_off_seed0, ctx_isolation_off_seed1, ctx_isolation_off_seed2]
+    patience: 5
+    val_every: 400
+    finding: >-
+      Killed before producing anything. With C2 off, ctx_out.r is None and the
+      guard indexed it anyway -- a TypeError that took out nine of this ladder's
+      twenty-four tasks. The guard now holds all classes stable when r is None.
+  - id: ctx/age_scalar
+    group: ctx1
+    arch: context
+    cohort: peds 7,001
+    classes: 27
+    masks: peds 100%
+    runs: [ctx_age_scalar_seed0]
+    patience: 5
+    val_every: 400
+    finding: Same TypeError as isolation_off; never produced a checkpoint.
+
+  # --------------------------------------------------------- context ctx2
+  - id: ctx2/ct_only
+    group: ctx2
+    arch: context
+    cohort: peds 7,001
+    classes: 27
+    masks: peds 100%
+    runs: [ctx2_ct_only_seed0, ctx2_ct_only_seed1, ctx2_ct_only_seed2]
+    patience: 8
+    val_every: 400
+    finding: >-
+      The architecture-only control: the context model with the Q-Former's context
+      path switched off, so it is the published model under the new code path. Every
+      other rung is a delta against this, not against V1.
+  - id: ctx2/concat
+    group: ctx2
+    arch: context
+    cohort: peds 7,001
+    classes: 27
+    masks: peds 100%
+    runs: [ctx2_concat_seed0, ctx2_concat_seed1, ctx2_concat_seed2]
+    patience: 8
+    val_every: 400
+  - id: ctx2/c1_xattn
+    group: ctx2
+    arch: context
+    cohort: peds 7,001
+    classes: 27
+    masks: peds 100%
+    runs: [ctx2_c1_xattn_seed0, ctx2_c1_xattn_seed1, ctx2_c1_xattn_seed2]
+    patience: 8
+    val_every: 400
+  - id: ctx2/c1_full
+    group: ctx2
+    arch: context
+    cohort: peds 7,001
+    classes: 27
+    masks: peds 100%
+    runs: [ctx2_c1_full_seed0, ctx2_c1_full_seed1, ctx2_c1_full_seed2]
+    patience: 8
+    val_every: 400
+  - id: ctx2/c2
+    group: ctx2
+    arch: context
+    cohort: peds 7,001
+    classes: 27
+    masks: peds 100%
+    runs: [ctx2_c2_seed0, ctx2_c2_seed1, ctx2_c2_seed2]
+    patience: 8
+    val_every: 400
+    status: queued
+  - id: ctx2/fusion_gated
+    group: ctx2
+    arch: context
+    cohort: peds 7,001
+    classes: 27
+    masks: peds 100%
+    runs: [ctx2_fusion_gated_seed0, ctx2_fusion_gated_seed1, ctx2_fusion_gated_seed2]
+    patience: 8
+    val_every: 400
+    status: queued
+  - id: ctx2/isolation_off
+    group: ctx2
+    arch: context
+    cohort: peds 7,001
+    classes: 27
+    masks: peds 100%
+    runs: [ctx2_isolation_off_seed0, ctx2_isolation_off_seed1, ctx2_isolation_off_seed2]
+    patience: 8
+    val_every: 400
+    status: queued
+  - id: ctx2/age_scalar
+    group: ctx2
+    arch: context
+    cohort: peds 7,001
+    classes: 27
+    masks: peds 100%
+    runs: [ctx2_age_scalar_seed0, ctx2_age_scalar_seed1, ctx2_age_scalar_seed2]
+    patience: 8
+    val_every: 400
+    status: queued
+
+  # --------------------------------------------------------------- joint
+  - id: joint/ct_only
+    group: joint
+    arch: context
+    cohort: peds + CT-RATE 49,545
+    classes: 27
+    masks: peds only (71.6% once ctx3 masks land)
+    runs: [joint_ct_only_seed0, joint_ct_only_seed1, joint_ct_only_seed2]
+    patience: 8
+    val_every: 800
+    status: queued
+  - id: joint/winner
+    group: joint
+    arch: context
+    cohort: peds + CT-RATE 49,545
+    classes: 27
+    masks: peds only
+    runs: []
+    patience: 8
+    val_every: 800
+    status: planned
+    finding: >-
+      Waits on the ctx2 ladder to name a winner. Submitted as
+      `sbatch --export=ALL,JOINT_RUNG=<winner> --array=0-5%3
+      pipeline/05_train/34_train_joint_ctx.sbatch`, which runs it and the joint
+      baseline in one array.
+
+  # ---------------------------------------------------------------- ctx3
+  - id: ctx3/masked
+    group: ctx3
+    arch: context
+    cohort: peds + CT-RATE 49,545
+    classes: 27
+    masks: 100% (in production)
+    runs: []
+    patience: 8
+    val_every: 800
+    status: planned
+    finding: >-
+      Blocked on mask generation, which is running. 31,570 CT-RATE training masks
+      arrived from another machine already in target format, taking coverage from
+      14.1% (pediatrics alone) to 71.6%; the remaining 15,575 are being segmented
+      here so the training set has one provenance. Worth finishing rather than
+      training at 71.6% because the gap is not a random third -- sliced by patient
+      id it runs 1.6 / 58 / 66 / 8 / 2 / 76 / 74 / 43 / 4 / 2 percent missing, the
+      signature of a shard array that stopped part way, which would leave L_org
+      fitted to a subsample selected by acquisition order.
+
+findings:
+  - title: The seed band is 0.0046
+    text: >-
+      Three seeds of an identical V1 configuration give sd = 0.0046 on pediatric
+      validation macro AUC. A ladder delta below roughly 0.0092 is inside that band
+      and is not a difference. This is measured on the V1 recipe, not the context
+      recipe, and is the most honest estimate available rather than an exact one.
+  - title: Anatomy routing costs accuracy in adults as much as in children
+    text: >-
+      Same checkpoint, same 27 classes: CT-RATE 0.7991 to 0.7617 (-0.0375),
+      pediatrics 0.8005 to 0.7651 (-0.0354), per-class correlation r = +0.908. The
+      routing penalty is a property of the method, not of the pediatric cohort.
+  - title: Validation AUC is not a result
+    text: >-
+      The val AUC columns are what the training loop selected checkpoints on. They
+      are computed on the split the model stopped early against, so they are
+      optimistically biased by construction. Only eval_matrix numbers are
+      reportable, and only with the patient-clustered bootstrap CI beside them.
+  - title: A quiet run directory is not a finished run
+    text: >-
+      A run killed at update 400 leaves what a finished run leaves: a best.pt, a
+      best_auc file, and silence. Nine of the first ladder's twenty-four tasks died
+      that way, and averaging their early AUCs would report those arms as worse
+      than they are. Runs below patience x val_every are marked DIED and excluded.
+  - title: Half of CT-RATE has an indication, not a quarter
+    text: >-
+      An early filter required three words, which suited the pediatric requisitions
+      (median 24 words) and threw away the adult ones, which are often a single
+      question. Corrected, CT-RATE indication coverage is 48.7%, not 24.1%.
