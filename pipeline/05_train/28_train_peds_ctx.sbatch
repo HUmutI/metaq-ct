@@ -1,6 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=ctxrung
-#SBATCH --partition=bch-gpu
+# Both GPU partitions. bch-gpu alone was estimating a start a WEEK out while
+# bch-gpu-pe could start in minutes; letting SLURM take whichever frees
+# first is the difference between results tomorrow and results next week.
+#SBATCH --partition=bch-gpu-pe,bch-gpu
 #SBATCH --gres=gpu:1
 #SBATCH --time=1-12:00:00
 #SBATCH --cpus-per-task=8
@@ -34,6 +37,11 @@ set -uo pipefail
 E=$HOME/micromamba/envs/arcct
 export LD_LIBRARY_PATH=$E/lib:${LD_LIBRARY_PATH:-}
 export TMPDIR=/tmp/ctxrung_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID:-0}; mkdir -p "$TMPDIR"
+# The first context rungs OOMed with 14.7 GB reserved-but-unallocated -- that is
+# fragmentation, not a real memory shortfall, and the allocator's own error
+# message names the fix. The 67-slot bank plus the counterfactual pass allocate
+# in a pattern the default caching allocator handles badly.
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export ARCCT_ROOT=$HOME/bch-arc-ct
 export PYTHONPATH=$ARCCT_ROOT:${PYTHONPATH:-}
 CFG=$ARCCT_ROOT/configs/stage2_peds.env

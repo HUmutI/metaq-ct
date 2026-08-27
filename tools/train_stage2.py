@@ -208,6 +208,7 @@ USE_CONTEXT_QFORMER = CTX_CFG.enabled
 CTX_PTOK_WEIGHT = CTX_CFG.ptok_weight
 CF_WEIGHT = float(os.environ.get("RAC_CF_WEIGHT", "0.5"))
 CF_TAU = float(os.environ.get("RAC_CF_TAU", "0.5"))
+CF_MAX_ROWS = int(os.environ.get("RAC_CF_MAX_ROWS", "6"))
 
 ORGAN_LABELS = sorted(ORGAN_TO_PATHIDX)
 
@@ -1028,6 +1029,15 @@ def main():
             if (USE_CONTEXT_QFORMER and CF_WEIGHT > 0.0 and ctx_out is not None
                     and any(ctx["indication_cf"])):
                 cf_idx = [i for i, t in enumerate(ctx["indication_cf"]) if t]
+                # Capped. The counterfactual pass runs a SECOND Q-Former forward
+                # with its own graph, which roughly doubles the bank's
+                # activations, and at batch 20 over 67 slots that is what pushed
+                # an A40 over. Capping the sub-batch is a budget on an auxiliary
+                # term; lowering RAC_BATCH_SIZE instead would shrink the
+                # in-batch negative pool that soft_clip_infonce depends on and
+                # make the context rungs incomparable to ct_only.
+                if len(cf_idx) > CF_MAX_ROWS:
+                    cf_idx = cf_idx[:CF_MAX_ROWS]
                 if cf_idx:
                     sel = torch.tensor(cf_idx, device=device)
                     cf_txt = [ctx["indication_cf"][i] for i in cf_idx]

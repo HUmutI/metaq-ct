@@ -1,6 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=pedv1s2
-#SBATCH --partition=bch-gpu
+# Both GPU partitions. bch-gpu alone was estimating a start a WEEK out while
+# bch-gpu-pe could start in minutes; letting SLURM take whichever frees
+# first is the difference between results tomorrow and results next week.
+#SBATCH --partition=bch-gpu-pe,bch-gpu
 #SBATCH --gres=gpu:1
 #SBATCH --time=3-00:00:00
 #SBATCH --cpus-per-task=8

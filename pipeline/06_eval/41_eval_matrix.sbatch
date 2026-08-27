@@ -1,8 +1,12 @@
 #!/bin/bash
 #SBATCH --job-name=evalmx
-#SBATCH --partition=bch-gpu
+#SBATCH --partition=bch-gpu-pe,bch-gpu
 #SBATCH --gres=gpu:1
-#SBATCH --time=04:00:00
+# 12h, not 4h. The V5_masked evaluation TIMED OUT at four hours: the forward
+# pass finished in 48 minutes and the 1,000-resample patient-clustered
+# bootstrap did not, so the run was killed after all the expensive work was
+# already done and nothing was written.
+#SBATCH --time=12:00:00
 #SBATCH --cpus-per-task=6
 # The combined cohort loads a 25k-row reports CSV plus the region cache in
 # every DataLoader worker, and 96G was killed at 75% of the evaluation.
