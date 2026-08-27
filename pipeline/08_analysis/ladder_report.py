@@ -18,6 +18,7 @@ import os
 import re
 import statistics
 import subprocess
+import time
 
 RUNS = "/temp_work/ch278233/runs"
 LOGS = "/temp_work/ch278233/ts_logs"
@@ -36,6 +37,39 @@ MEANS = {
     "age_scalar": "scalar age instead of the ordinal band",
 }
 BEST_RE = re.compile(r"best_auc_update(\d+)\.txt$")
+
+
+def is_finished(run_dir: str, quiet_secs: int = 1800) -> bool:
+    """Has this run stopped writing, with a best checkpoint to show for it?
+
+    Not "did it reach RAC_TOTAL_UPDATES": early stopping is on (patience 5), so
+    a legitimate run ends at 3,600 or 4,000 of 6,000 and a progress threshold
+    calls it unfinished. What actually distinguishes a finished run from a live
+    one is that nothing is writing to its directory any more.
+    """
+    best = os.path.join(run_dir, "CTClip.best.pt")
+    if not os.path.isfile(best):
+        return False
+    try:
+        newest = max(os.path.getmtime(os.path.join(run_dir, f))
+                     for f in os.listdir(run_dir))
+    except (OSError, ValueError):
+        return False
+    return (time.time() - newest) > quiet_secs
+
+
+def last_update(run_dir: str) -> int:
+    """How far the run actually got, from its numbered checkpoints."""
+    ns = []
+    for path in glob.glob(os.path.join(run_dir, "CTClip.*.pt")):
+        m = re.search(r"CTClip\.(\d+)\.pt$", path)
+        if m:
+            ns.append(int(m.group(1)))
+    for path in glob.glob(os.path.join(run_dir, "best_auc_update*.txt")):
+        m = BEST_RE.search(path)
+        if m:
+            ns.append(int(m.group(1)))
+    return max(ns) if ns else 0
 
 
 def best_auc(run_dir: str) -> tuple[float | None, int | None]:
@@ -112,9 +146,15 @@ def main() -> int:
         for seed in range(a.seeds):
             d = os.path.join(RUNS, f"ctx_{rung}_seed{seed}")
             auc, at = best_auc(d) if os.path.isdir(d) else (None, None)
+            reached = last_update(d) if os.path.isdir(d) else 0
             m = log_tail_metrics(rung, seed) if os.path.isdir(d) else {}
-            cells.append({"seed": seed, "auc": auc, "at": at, **m})
-        got = [c["auc"] for c in cells if c["auc"] is not None]
+            done = is_finished(d) if os.path.isdir(d) else False
+            cells.append({"seed": seed, "auc": auc, "at": at,
+                          "reached": reached, "done": done, **m})
+        # Only FINISHED seeds contribute to a rung's mean. A run at update 800 of
+        # 6000 has a best_auc, and averaging it in would report a rung as worse
+        # than it is purely because it started later.
+        got = [c["auc"] for c in cells if c["auc"] is not None and c["done"]]
         row = {
             "rung": rung, "means": MEANS[rung], "cells": cells,
             "n": len(got),
@@ -131,12 +171,13 @@ def main() -> int:
 
     q = queue_state()
     print(f"queue: {q or 'no ctxrung tasks'}\n")
-    print(f"{'rung':<15s} {'n':>2s} {'mean AUC':>9s} {'sd':>7s}  seeds")
+    print(f"{'rung':<15s} {'n':>2s} {'mean AUC':>9s} {'sd':>7s}  seeds  (x@n = still running at update n, excluded)")
     print("-" * 78)
     base = next((r for r in table if r["rung"] == "ct_only"), None)
     for r in table:
-        seeds = " ".join(f"{c['auc']:.4f}" if c["auc"] is not None else "  --  "
-                         for c in r["cells"])
+        seeds = " ".join(
+            (f"{c['auc']:.4f}" if c["done"] else f"({c['auc']:.4f}@{c['reached']})")
+            if c["auc"] is not None else "  --  " for c in r["cells"])
         mean = f"{r['mean']:.4f}" if r["mean"] is not None else "   --"
         sd = f"{r['sd']:.4f}" if r["sd"] is not None else "     --"
         flag = "" if r["complete"] else "  (incomplete)"
@@ -158,18 +199,28 @@ def main() -> int:
                 note = "   <- concat is beating cross-attention; the cited study's result"
             print(f"  {r['rung']:<15s} {d:+.4f}{note}")
 
-    print("\nsigma, from Phase 0/8 (V1 recipe, 3 seeds):")
-    v1 = []
+    print("\nsigma, from Phase 0/8 (V1 recipe):")
+    # A run still in progress has a best_auc from an early update, and folding
+    # that into sigma inflates it -- which would then be used to decide how many
+    # seeds the ladder needs. Only runs that reached the full schedule count.
+    v1, partial = [], []
     for d in ("peds_finetune", "peds_finetune_v1_seed1", "peds_finetune_v1_seed2"):
-        auc, _ = best_auc(os.path.join(RUNS, d))
-        if auc is not None:
-            v1.append(auc)
+        path = os.path.join(RUNS, d)
+        auc, _ = best_auc(path)
+        reached = last_update(path)
+        if auc is None:
+            continue
+        (v1 if is_finished(path) else partial).append((d, auc, reached))
+    for d, auc, reached in partial:
+        print(f"  {d}: {auc:.4f}, last update {reached} -- STILL WRITING, "
+              "excluded from sigma")
     if len(v1) > 1:
-        s = statistics.stdev(v1)
-        print(f"  {len(v1)} seeds, sd = {s:.4f}  -> a delta below ~{2*s:.4f} is "
-              "inside the seed band and should not be called a difference")
+        vals = [a for _, a, _ in v1]
+        sd = statistics.stdev(vals)
+        print(f"  {len(v1)} completed seeds, sd = {sd:.4f}  -> a delta below "
+              f"~{2*sd:.4f} is inside the seed band and is not a difference")
     else:
-        print(f"  only {len(v1)} seed(s) available yet")
+        print(f"  only {len(v1)} completed seed(s); sigma is not measurable yet")
 
     incomplete = [r["rung"] for r in table if not r["complete"]]
     if incomplete:
