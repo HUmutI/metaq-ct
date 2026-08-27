@@ -29,14 +29,16 @@ The resampled NIfTI is still never kept: it is written to node-local disk, fed t
 the segmenter, and deleted. Only the label volume survives, which compresses to
 a fraction of the CT.
 """
-import sys, os
-sys.path.insert(0, "/home/ch278233/pipeline/lib")
 from __future__ import annotations
 import argparse, os, shutil, sys, tempfile, time
 import numpy as np, nibabel as nib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# ts_roi lives in pipeline/lib, reached from HERE rather than by absolute path:
+# an absolute path here pointed into a SECOND copy of the pipeline tree, so this
+# file imported its region table from a directory nothing else in the repo used.
 sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "lib"))
 from ts_roi import PEDS as ROI
 
 SPACING = (1.5, 1.5, 3.0)
