@@ -140,7 +140,7 @@ def _aucs(pred, true):
 def validate(model, loader, device):
     model.eval()
     preds, trues = [], []
-    for ct, _, _, labels, _, _, _ in tqdm.tqdm(loader, desc="Stage1-val", leave=False):
+    for ct, _, _, labels, _, _, _, _ in tqdm.tqdm(loader, desc="Stage1-val", leave=False):
         ct = ct.to(device, non_blocking=True)
         with amp_context(device):
             logits = model(ct)
@@ -201,7 +201,7 @@ def main():
     for epoch in range(start_epoch, EPOCHS + 1):
         losses = []
         pbar = tqdm.tqdm(train_loader, desc=f"Stage1 epoch {epoch}/{EPOCHS}")
-        for ct, _, _, labels, _, _, _ in pbar:
+        for ct, _, _, labels, _, _, _, _ in pbar:
             ct = ct.to(device, non_blocking=True)
             labels = labels.to(device, non_blocking=True)
             optimizer.zero_grad(set_to_none=True)

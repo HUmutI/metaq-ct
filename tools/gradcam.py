@@ -286,7 +286,7 @@ def main():
     print(f"[viz] targets = {TARGET_PATHS}")
 
     summary = []
-    for ct, _, _, labels, masks_fine, has_masks, accessions in tqdm.tqdm(loader, desc="viz"):
+    for ct, _, _, labels, masks_fine, has_masks, accessions, _ in tqdm.tqdm(loader, desc="viz"):
         ct = ct.to(device)
         masks_fine = masks_fine.to(device)
         has_masks = has_masks.to(device)

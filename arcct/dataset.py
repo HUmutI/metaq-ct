@@ -241,6 +241,10 @@ class RACDatasetV4(Dataset):
         limit=0,
         fail_fast=True,
         volume_list_path="",
+        context_csv="",
+        demographics_csv="",
+        ctx_seed=None,
+        volume_exclude_path="",
     ):
         self.data_folder = data_folder
         self.mask_root = mask_root
@@ -252,6 +256,83 @@ class RACDatasetV4(Dataset):
             with open(volume_list_path) as f:
                 self.volume_list = {ln.strip() for ln in f if ln.strip()}
             print(f"[CTRATE] volume_list filter active: {len(self.volume_list)} vols ({volume_list_path})", flush=True)
+        # -- clinical context ------------------------------------------------
+        # Loaded here, looked up by accession in __getitem__. The sample tuples
+        # are indexed positionally elsewhere (s[5]), so widening them is the
+        # riskier edit; a side table matches how acc2text/acc2label already work.
+        from arcct.context import NO_INDICATION, age_to_band     # noqa: PLC0415
+        self.NO_INDICATION = NO_INDICATION
+        self.acc2ind, self.acc2ind_status = {}, {}
+        self.acc2band, self.acc2sex = {}, {}
+        self.ind_pool = []
+        self.ind_cohort = {}
+        context_csv = context_csv or os.environ.get("RAC_CONTEXT_CSV", "")
+        demographics_csv = demographics_csv or os.environ.get("RAC_DEMOGRAPHICS_CSV", "")
+        if context_csv and os.path.isfile(context_csv):
+            df_ctx = pd.read_csv(context_csv, keep_default_na=False)
+            for _, row in df_ctx.iterrows():
+                acc = row["VolumeName"]
+                status = str(row.get("ind_status", "") or "absent")
+                txt = str(row.get("Indication_EN", "") or "").strip()
+                if status != "present" or not txt:
+                    txt, status = NO_INDICATION, status or "absent"
+                self.acc2ind[acc] = txt
+                self.acc2ind_status[acc] = status
+                if status == "present":
+                    self.ind_pool.append(acc)
+                    self.ind_cohort[acc] = str(row.get("cohort", "") or "")
+            print(f"[ctx] indications: {len(self.acc2ind)} rows, "
+                  f"{len(self.ind_pool)} usable ({context_csv})", flush=True)
+        if demographics_csv and os.path.isfile(demographics_csv):
+            df_dem = pd.read_csv(demographics_csv, keep_default_na=False)
+            for _, row in df_dem.iterrows():
+                acc = row["VolumeName"]
+                try:
+                    self.acc2band[acc] = int(row["AgeBand"])
+                except (KeyError, TypeError, ValueError):
+                    self.acc2band[acc] = age_to_band(row.get("AgeYears"))
+                try:
+                    self.acc2sex[acc] = int(row["SexIdx"])
+                except (KeyError, TypeError, ValueError):
+                    self.acc2sex[acc] = 2
+            print(f"[ctx] demographics: {len(self.acc2band)} rows ({demographics_csv})",
+                  flush=True)
+
+        # Dropout and the counterfactual partner are drawn from a seed, an epoch
+        # and the sample index -- never from random.random(). This trainer
+        # auto-resumes on every SLURM requeue, and Python's global RNG state is
+        # not in the checkpoint, so a naive draw would silently change schedule
+        # mid-run and differ with the worker count.
+        self.ctx_seed = int(os.environ.get("RAC_CTX_SEED", os.environ.get("RAC_SEED", "0"))
+                            if ctx_seed is None else ctx_seed)
+        self.epoch = 0
+        self.ind_dropout = float(os.environ.get("RAC_IND_DROPOUT", "0.0")) if is_train else 0.0
+        self.cf_prob = float(os.environ.get("RAC_CF_PROB", "0.0")) if is_train else 0.0
+        self.cf_same_cohort = os.environ.get("RAC_CF_SAME_COHORT", "1") == "1"
+        # Evaluation conditions (§ four conditions): none | true | shuffled | off.
+        # Applied once, at construction, so an eval always re-runs to the same
+        # number; never as per-batch randomness.
+        self.eval_ind_mode = os.environ.get("RAC_EVAL_IND_MODE", "true").lower()
+        if not is_train and self.eval_ind_mode in ("none", "off"):
+            self.acc2ind = {k: NO_INDICATION for k in self.acc2ind}
+        elif not is_train and self.eval_ind_mode == "shuffled":
+            import random as _r                                   # noqa: PLC0415
+            keys = sorted(self.ind_pool)
+            vals = [self.acc2ind[k] for k in keys]
+            _r.Random(self.ctx_seed).shuffle(vals)
+            self.acc2ind.update(dict(zip(keys, vals)))
+            print(f"[ctx] EVAL indication mode=shuffled over {len(keys)} rows", flush=True)
+
+        self.exclude = set()
+        volume_exclude_path = volume_exclude_path or os.environ.get("RAC_VOLUME_EXCLUDE", "")
+        if volume_exclude_path and os.path.isfile(volume_exclude_path):
+            with open(volume_exclude_path) as f:
+                for ln in f:
+                    ln = ln.strip()
+                    if ln and not ln.startswith("#"):
+                        self.exclude.add(ln.split("\t")[0].strip())
+            print(f"[ctx] volume exclude list: {len(self.exclude)} volumes", flush=True)
+
         self.enable_flips = is_train and os.environ.get("RAC_ENABLE_ANATOMY_FLIPS", "0") == "1"
         self.require_mask = is_train and os.environ.get("RAC_REQUIRE_MASK", "0") == "1"
         # Stage-2 augmentation pack (train-only, defaults off).
@@ -309,7 +390,7 @@ class RACDatasetV4(Dataset):
                     for c in PATHOLOGIES]
             self.acc2label[acc] = np.asarray(vals, dtype=np.float32)
 
-        skipped_report = skipped_label = skipped_nomask = 0
+        skipped_report = skipped_label = skipped_nomask = skipped_excluded = 0
         self.samples = []
         stop_scan = False
         for pf in tqdm.tqdm(sorted(glob.glob(os.path.join(data_folder, "*"))),
@@ -322,6 +403,9 @@ class RACDatasetV4(Dataset):
                 for npz in sorted(glob.glob(os.path.join(af, "*.npz"))):
                     acc = os.path.basename(npz).replace(".npz", ".nii.gz")
                     if self.volume_list is not None and acc not in self.volume_list:
+                        continue
+                    if acc in self.exclude:
+                        skipped_excluded += 1
                         continue
                     if acc not in self.acc2text:
                         skipped_report += 1
@@ -353,7 +437,8 @@ class RACDatasetV4(Dataset):
         print(
             f"[RAC] {os.path.basename(data_folder)}: {len(self.samples):,} samples, "
             f"{n_masked:,} with masks, skipped_report={skipped_report:,}, "
-            f"skipped_label={skipped_label:,}, skipped_nomask={skipped_nomask:,} "
+            f"skipped_label={skipped_label:,}, skipped_nomask={skipped_nomask:,}, "
+            f"skipped_excluded={skipped_excluded:,} "
             f"(require_mask={self.require_mask})"
         )
         if not self.samples:
@@ -467,6 +552,65 @@ class RACDatasetV4(Dataset):
             mask_hwd = torch.flip(mask_hwd, dims=(1,))
         return ct_chwd, mask_hwd
 
+    def set_epoch(self, epoch: int) -> None:
+        """Advance the context RNG stream.
+
+        The training loop must call this before re-creating the DataLoader
+        iterator. With ``persistent_workers=True`` the workers hold a COPY of
+        this object and will never see the change, so the dropout mask would be
+        frozen for the whole run -- a fixed 30% of volumes that never see their
+        indication, which is a different and worse experiment. Contexts must be
+        built with ``persistent_workers=False``; preflight asserts it.
+        """
+        self.epoch = int(epoch)
+
+    def _ctx_rng(self, idx: int):
+        import random                                          # noqa: PLC0415
+        return random.Random((self.ctx_seed * 1000003 + self.epoch * 7919 + idx)
+                             & 0x7FFFFFFF)
+
+    def _context_for(self, idx: int, accession: str) -> dict:
+        """Indication, counterfactual partner, age band and sex for one sample."""
+        status = self.acc2ind_status.get(accession, "absent")
+        ind = self.acc2ind.get(accession, self.NO_INDICATION)
+        rng = self._ctx_rng(idx)
+
+        dropped = False
+        if self.ind_dropout > 0.0 and status == "present":
+            # Rows that are already vacuous or absent are NOT counted as
+            # dropped. Counting them would put the effective rate on the adult
+            # half -- where 75.9% of CT-RATE indications are vacuous -- far above
+            # the configured one, in a way no log would show.
+            dropped = rng.random() < self.ind_dropout
+            if dropped:
+                ind = self.NO_INDICATION
+
+        cf = ""
+        # Drawn from the same stream immediately after the dropout draw, so both
+        # are reproducible; and never against a dropped row, because a
+        # counterfactual paired with "no indication" is not the experiment.
+        if self.cf_prob > 0.0 and not dropped and status == "present" and self.ind_pool:
+            if rng.random() < self.cf_prob:
+                pool = self.ind_pool
+                if self.cf_same_cohort:
+                    mine = self.ind_cohort.get(accession, "")
+                    same = [a for a in pool if self.ind_cohort.get(a, "") == mine]
+                    pool = same or pool
+                for _ in range(8):
+                    pick = pool[rng.randrange(len(pool))]
+                    if pick != accession:
+                        cf = self.acc2ind.get(pick, "")
+                        break
+
+        return {
+            "indication": ind,
+            "indication_cf": cf,
+            "age_band": int(self.acc2band.get(accession, -1)),
+            "sex": int(self.acc2sex.get(accession, -1)),
+            "ind_dropped": bool(dropped),
+            "ind_status": status,
+        }
+
     def __getitem__(self, idx):
         npz_path, accession, text, findings, label, mask_path = self.samples[idx]
         try:
@@ -492,6 +636,10 @@ class RACDatasetV4(Dataset):
         ct_chwd, mask_hwd = self._maybe_joint_flip(ct_chwd, mask_hwd)
         ct = ct_chwd.permute(0, 3, 1, 2).contiguous()
         mask_fine = mask_hwd.permute(2, 0, 1).contiguous().unsqueeze(0)
+        # The context dict is element 8 and is returned UNCONDITIONALLY, even
+        # when no context CSV was loaded -- then it carries NO_INDICATION and
+        # age_band/sex = -1. An environment variable that changes the tuple
+        # LENGTH is the defect class this codebase keeps writing comments about.
         return (
             ct,
             text,
@@ -500,11 +648,20 @@ class RACDatasetV4(Dataset):
             mask_fine,
             torch.tensor(has_mask, dtype=torch.bool),
             accession,
+            self._context_for(idx, accession),
         )
 
 
 def rac_collate(batch):
-    cts, texts, findings, labels, masks, has_masks, accessions = zip(*batch)
+    cts, texts, findings, labels, masks, has_masks, accessions, ctxs = zip(*batch)
+    ctx = {
+        "indication": [c["indication"] for c in ctxs],
+        "indication_cf": [c["indication_cf"] for c in ctxs],
+        "age_band": torch.tensor([c["age_band"] for c in ctxs], dtype=torch.long),
+        "sex": torch.tensor([c["sex"] for c in ctxs], dtype=torch.long),
+        "ind_dropped": torch.tensor([c["ind_dropped"] for c in ctxs], dtype=torch.bool),
+        "ind_status": [c["ind_status"] for c in ctxs],
+    }
     return (
         torch.stack(cts),
         list(texts),
@@ -513,4 +670,5 @@ def rac_collate(batch):
         torch.stack(masks),
         torch.stack(has_masks),
         list(accessions),
+        ctx,
     )

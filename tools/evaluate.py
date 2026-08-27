@@ -396,7 +396,7 @@ def evaluate(clip, tokenizer, device):
 
     global_pred, routed_pred, all_true, all_accessions = [], [], [], []
     n_routed_total = 0
-    for ct, _, _, labels, masks_fine, has_masks, accessions in tqdm.tqdm(val_loader, desc="Eval"):
+    for ct, _, _, labels, masks_fine, has_masks, accessions, ctx in tqdm.tqdm(val_loader, desc="Eval"):
         ct = ct.to(device, non_blocking=True)
         masks_fine = masks_fine.to(device, non_blocking=True)
         has_masks = has_masks.to(device, non_blocking=True)

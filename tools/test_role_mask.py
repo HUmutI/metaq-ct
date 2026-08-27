@@ -12,7 +12,7 @@ Checks:
   1. an absent region reports rho = 0 and empty = True, while its mask row is
      still all-True (the NaN guard must survive the fix);
   2. with row_index=None and return_stats=False the returned mask is byte-equal
-     to the version at git HEAD, so nothing about training changed;
+     to the pinned pre-change baseline, so nothing about training changed;
   3. row_index gathers rows correctly, and the tied conditioned slots inherit
      exactly the mask of their general partners;
   4. statistics are reported per distinct region, not per slot -- gathering must
@@ -37,6 +37,13 @@ from arcct.anatomy_qformer import build_role_mask        # noqa: E402
 from arcct.slots import SlotLayout                       # noqa: E402
 
 FAILS: list[str] = []
+# The reference is PINNED, not "HEAD". Once the change is committed, HEAD
+# contains it, and a no-regression test that compares HEAD against HEAD passes
+# while testing nothing at all. 8c5fc0d is the last commit before the Phase 1
+# model changes; override with ARCCT_BASELINE_REF if the history is ever
+# rewritten.
+BASELINE_REF = os.environ.get("ARCCT_BASELINE_REF", "8c5fc0d")
+
 
 
 def check(cond: bool, msg: str) -> None:
@@ -44,8 +51,9 @@ def check(cond: bool, msg: str) -> None:
         FAILS.append(msg)
 
 
-def load_reference(ref: str = "HEAD"):
-    """build_role_mask as it stands at ``ref``, imported under a throwaway name."""
+def load_reference(ref: str = ""):
+    """build_role_mask as it stands at ``ref`` (default: the pinned baseline), imported under a throwaway name."""
+    ref = ref or BASELINE_REF
     try:
         src = subprocess.check_output(
             ["git", "-C", HERE, "show", f"{ref}:arcct/anatomy_qformer.py"],
@@ -112,7 +120,7 @@ def main() -> int:
     # -- 2. no behavioural change for existing callers ------------------------
     ref = load_reference()
     if ref is None:
-        FAILS.append("could not load anatomy_qformer.py from git HEAD -- "
+        FAILS.append("could not load anatomy_qformer.py from the pinned baseline -- "
                      "the no-regression check did not run")
     else:
         old = ref(ts, (Dp, Dp, Dp), anatomy, pathology, num_global=G)
@@ -165,7 +173,7 @@ def main() -> int:
         for f in FAILS:
             print("   ", f)
         return 1
-    print("S3 OK · rho computed before the override · mask byte-equal to HEAD "
+    print("S3 OK · rho computed before the override · mask byte-equal to the baseline "
           "· row_index inherits the tied rows · stats stay per-region")
     return 0
 

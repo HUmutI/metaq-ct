@@ -3,8 +3,8 @@
 
 Four things have to hold before anything is built on top of the widened bank.
 
-1.  A plain 39-query forward is *bit-identical* to the version at git HEAD. The
-    new keyword arguments all default to None and take the same branch, but
+1.  A plain 39-query forward is *bit-identical* to the pinned pre-change baseline.
+    The new keyword arguments all default to None and take the same branch, but
     "should be identical" is exactly the claim that has to be measured rather
     than asserted, so the reference module is loaded straight out of git and run
     side by side.
@@ -35,6 +35,13 @@ from arcct.qformer import QFormer                      # noqa: E402
 from arcct.slots import SlotLayout                     # noqa: E402
 
 FAILS: list[str] = []
+# The reference is PINNED, not "HEAD". Once the change is committed, HEAD
+# contains it, and a no-regression test that compares HEAD against HEAD passes
+# while testing nothing at all. 8c5fc0d is the last commit before the Phase 1
+# model changes; override with ARCCT_BASELINE_REF if the history is ever
+# rewritten.
+BASELINE_REF = os.environ.get("ARCCT_BASELINE_REF", "8c5fc0d")
+
 
 
 def check(cond: bool, msg: str) -> None:
@@ -42,8 +49,9 @@ def check(cond: bool, msg: str) -> None:
         FAILS.append(msg)
 
 
-def load_reference(ref: str = "HEAD") -> object | None:
-    """Import arcct/qformer.py as it stands at ``ref`` under a throwaway name."""
+def load_reference(ref: str = "") -> object | None:
+    """Import arcct/qformer.py as it stands at ``ref`` (default: the pinned baseline) under a throwaway name."""
+    ref = ref or BASELINE_REF
     try:
         src = subprocess.check_output(["git", "-C", HERE, "show", f"{ref}:arcct/qformer.py"],
                                       text=True, stderr=subprocess.DEVNULL)
@@ -77,7 +85,7 @@ def main() -> int:
     # -- 1. the plain path is unchanged, measured against git ------------------
     ref_mod = load_reference()
     if ref_mod is None:
-        FAILS.append("could not load arcct/qformer.py from git HEAD -- "
+        FAILS.append("could not load arcct/qformer.py from the pinned baseline -- "
                      "the no-regression check did not run")
     else:
         new = build(QFormer, 39)
@@ -87,9 +95,9 @@ def main() -> int:
             p_new, t_new = new(feat, return_tokens=True)
             p_old, t_old = old(feat, return_tokens=True)
         check(torch.equal(p_new, p_old),
-              f"plain pooled output drifted from HEAD: max|d|={(p_new - p_old).abs().max():.3e}")
+              f"plain pooled output drifted from the baseline: max|d|={(p_new - p_old).abs().max():.3e}")
         check(torch.equal(t_new, t_old),
-              f"plain tokens drifted from HEAD: max|d|={(t_new - t_old).abs().max():.3e}")
+              f"plain tokens drifted from the baseline: max|d|={(t_new - t_old).abs().max():.3e}")
 
         # An explicitly supplied bank of exactly num_queries rows must also be
         # bit-identical: this is the path the context module will take.
@@ -166,7 +174,7 @@ def main() -> int:
         for f in FAILS:
             print("   ", f)
         return 1
-    print(f"S2 OK · plain path bit-identical to HEAD · split==mask (max|d|={dt:.1e}) "
+    print(f"S2 OK · plain path bit-identical to the baseline · split==mask (max|d|={dt:.1e}) "
           f"· Z_gen isolated exactly · wide-bank guard raises")
     return 0
 

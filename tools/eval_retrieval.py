@@ -187,7 +187,7 @@ def main():
 
     img_latents, txt_latents, accs_all = [], [], []
     with torch.no_grad():
-        for ct, texts, _, _, _, _, accessions in tqdm.tqdm(loader, desc="Encode img+txt"):
+        for ct, texts, _, _, _, _, accessions, _ in tqdm.tqdm(loader, desc="Encode img+txt"):
             ct = ct.to(device, non_blocking=True)
             feat_map = clip.visual_transformer.forward_spatial(ct)
             raw = clip.visual_transformer.global_pool(feat_map)

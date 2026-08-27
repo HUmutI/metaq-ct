@@ -409,7 +409,7 @@ def run_validation(clip, tokenizer, device, val_loader, qformer_module=None, use
         qformer_module.eval()
     pos_embs, neg_embs = encode_prompts(clip, tokenizer, device)
     all_pred, all_true = [], []
-    for ct, _, _, labels, masks_fine, has_masks, _ in tqdm.tqdm(val_loader, desc="Val-global", leave=False):
+    for ct, _, _, labels, masks_fine, has_masks, _, ctx in tqdm.tqdm(val_loader, desc="Val-global", leave=False):
         ct = ct.to(device, non_blocking=True)
         with amp_context(device):
             feat_map = clip.visual_transformer.forward_spatial(ct)
@@ -698,10 +698,10 @@ def main():
 
     while update_step < TOTAL_UPDATES:
         try:
-            ct, texts, findings, labels, masks_fine, has_masks, accessions = next(train_iter)
+            ct, texts, findings, labels, masks_fine, has_masks, accessions, ctx = next(train_iter)
         except StopIteration:
             train_iter = iter(train_loader)
-            ct, texts, findings, labels, masks_fine, has_masks, accessions = next(train_iter)
+            ct, texts, findings, labels, masks_fine, has_masks, accessions, ctx = next(train_iter)
 
         ct = ct.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
