@@ -54,6 +54,8 @@ def main() -> int:
     ap.add_argument("--in-dir", required=True)
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--worklist", default=os.environ.get("TS_WORKLIST", ""),
+                    help="file of npz paths to process; overrides scanning --in-dir")
     ap.add_argument("--shard-id", type=int, default=int(os.environ.get("SHARD_ID", "0")))
     ap.add_argument("--shard-n", type=int, default=int(os.environ.get("SHARD_N", "1")))
     a = ap.parse_args()
@@ -66,8 +68,22 @@ def main() -> int:
     # finding nothing - a listdir on the nested tree returns directories and
     # reports "0 volumes" without an error.
     import glob as _g
-    files = sorted(_g.glob(os.path.join(a.in_dir, "*", "*", "*.npz"))
-                   or _g.glob(os.path.join(a.in_dir, "*.npz")))
+    if a.worklist:
+        # Resuming a partial set. Scanning --in-dir and relying on the "output
+        # already exists" skip below would still stat every one of 42k volumes
+        # across 64 shards, and would silently reprocess anything whose mask
+        # came from elsewhere and lives under a different root.
+        with open(a.worklist, encoding="utf-8") as fh:
+            files = [ln.strip() for ln in fh if ln.strip()]
+        gone = [f for f in files if not os.path.exists(f)]
+        if gone:
+            print("[ts] worklist'te olmayan %d npz, ilki: %s"
+                  % (len(gone), gone[0]), flush=True)
+            return 1
+        print("[ts] worklist %s: %d volumes" % (a.worklist, len(files)), flush=True)
+    else:
+        files = sorted(_g.glob(os.path.join(a.in_dir, "*", "*", "*.npz"))
+                       or _g.glob(os.path.join(a.in_dir, "*.npz")))
     files = [f for f in files if ".tmp." not in os.path.basename(f)]
     if not files:
         print("[ts] %s altinda npz bulunamadi" % a.in_dir, flush=True)
