@@ -241,7 +241,7 @@ def build_ctrate() -> list[dict]:
 
 
 def assertions(rows: list[dict], peds_raw: list[dict], pool: NamePool,
-               vocab: frozenset, hits: Counter) -> list[str]:
+               vocab: frozenset, hits: Counter, eponyms: frozenset) -> list[str]:
     """Every one of these is fatal. Nothing is written until they all pass."""
     bad = []
     texts = [(r["VolumeName"], r["Indication_EN"]) for r in rows if r["Indication_EN"]]
@@ -283,10 +283,24 @@ def assertions(rows: list[dict], peds_raw: list[dict], pool: NamePool,
     for v, t in texts:
         if v.startswith("ped_"):
             tokens.update(m.group(0).lower() for m in WORD_TOKEN.finditer(t))
-    leaked_names = (tokens & (pool.patient | pool.provider)) - vocab
+    # The assertion has to mirror the scrubber's policy or it fails on the
+    # deliberate residual. A pool token that is ALSO ordinary clinical
+    # vocabulary survives on purpose -- see _cap() -- so it is reported as a
+    # number, not as a leak. A pool token surviving for any OTHER reason is a
+    # real leak and is fatal.
+    from scrub_phi import ALWAYS_KEEP, _stems                   # noqa: PLC0415
+    known = set(vocab) | set(ALWAYS_KEEP) | set(eponyms)
+    survivors = tokens & (pool.patient | pool.provider)
+    deliberate = {w for w in survivors if any(st in known for st in _stems(w))}
+    leaked_names = survivors - deliberate
     if leaked_names:
         bad.append(f"A4/A5 names: {len(leaked_names)} pool tokens survive in the "
-                   f"pediatric rows, e.g. {sorted(leaked_names)[:3]}")
+                   f"pediatric rows for no vocabulary reason, e.g. "
+                   f"{sorted(leaked_names)[:5]}")
+    if deliberate:
+        print(f"[audit] {len(deliberate)} cohort surnames survive because they are "
+              f"also clinical vocabulary (deliberate, see _cap): "
+              f"{sorted(deliberate)[:8]}{' ...' if len(deliberate) > 8 else ''}")
 
     badkey = [r["VolumeName"] for r in rows if not KEY_RE.match(r["VolumeName"])]
     if badkey:
@@ -343,7 +357,7 @@ def main() -> int:
     if a.cohort in ("ctrate", "both"):
         rows += build_ctrate()
 
-    bad = assertions(rows, peds_raw, pool, vocab, hits)
+    bad = assertions(rows, peds_raw, pool, vocab, hits, eponyms)
     words = [r["ind_words"] for r in rows if r["ind_status"] == "present"]
     if words:
         w = sorted(words)

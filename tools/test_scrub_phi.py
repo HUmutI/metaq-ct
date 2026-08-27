@@ -101,6 +101,38 @@ def main() -> int:
             check(w.lower() in got.lower(),
                   f"PRECISION: {w!r} was redacted out of {text!r} -> {got!r}")
 
+    # ---- ordinary clinical language beats the name pool ------------------
+    # Deliberate, and the single biggest source of false redactions before it:
+    # "prior", "not", "iii", "ray", "wall" are all real surnames in this cohort
+    # and all real clinical language. The pool no longer wins over vocabulary.
+    POOL2 = NamePool(patient=frozenset({"prior", "wall", "kowalczyk"}),
+                     provider=frozenset({"ray"}))
+    V2 = VOCAB | {"prior", "wall", "ray"}
+    got = scrub("Prior chest CT. Chest wall lesion. Chest X-ray correlation.",
+                RowPHI(), POOL2, V2, frozenset(DEFAULT_EPONYMS)).text
+    for w in ("Prior", "wall", "ray"):
+        check(w.lower() in got.lower(),
+              f"ordinary clinical language must survive a pool collision: {w!r} -> {got!r}")
+
+    # ... but THIS patient's own name still goes, even if it is in vocabulary.
+    # That is what L1 is for, and why it runs before any of this.
+    got = scrub("Prior study for this patient.",
+                RowPHI(last="Prior"), POOL2, V2, frozenset(DEFAULT_EPONYMS)).text
+    check("prior" not in got.lower(),
+          f"the row's OWN name must go even when it is vocabulary -> {got!r}")
+
+    # ... and a pool name that is NOT vocabulary still goes.
+    got = scrub("Discussed with Kowalczyk.", RowPHI(), POOL2, V2,
+                frozenset(DEFAULT_EPONYMS)).text
+    check("kowalczyk" not in got.lower(), f"a non-vocabulary pool name must go -> {got!r}")
+
+    # ---- spelled-out ages become bands too -------------------------------
+    for text, want in [("six-year-old with cough", "[AGE 5-10y]"),
+                       ("three month old, rule out aspiration", "[AGE <1y]"),
+                       ("fourteen year old with trauma", "[AGE 13-18y]")]:
+        got = S(text).text
+        check(want in got, f"word-number age: {text!r} -> {got!r}, expected {want}")
+
     # ---- an eponym that is ALSO this patient's surname must go -----------
     # L1 runs first, which is the whole reason the layer order is fixed.
     r2 = RowPHI(last="Down")

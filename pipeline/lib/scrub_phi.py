@@ -97,6 +97,16 @@ SITE_LITERALS = [
 AGE_PHRASE = re.compile(
     r"\b(\d{1,3})[\s-]*(?:and[\s-]*a[\s-]*half[\s-]*)?"
     r"(year|yr|y/?o|yo|month|mo|week|wk|day)s?[\s-]*(?:old)?\b", re.I)
+# Spelled-out ages. "six-year-old" was being redacted as an unknown hyphenated
+# Titlecase token, which lost the age AND left a [NAME] in its place.
+WORD_NUMBERS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+                "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11,
+                "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15,
+                "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19,
+                "twenty": 20}
+AGE_WORD_PHRASE = re.compile(
+    r"\b(" + "|".join(WORD_NUMBERS) + r")[\s-]+"
+    r"(year|yr|month|mo|week|wk|day)s?[\s-]*(?:old)?\b", re.I)
 AGE_UNIT = {"year": 1.0, "yr": 1.0, "y/o": 1.0, "yo": 1.0,
             "month": 1 / 12, "mo": 1 / 12, "week": 1 / 52, "wk": 1 / 52, "day": 1 / 365}
 
@@ -198,6 +208,7 @@ DEFAULT_EPONYMS = {
 # only by the over-redaction audit: a word that is being redacted hundreds of
 # times is a vocabulary gap, not a name.
 REDACTED: Counter = Counter()
+REDACTED_L3: Counter = Counter()
 
 
 class ScrubResult(NamedTuple):
@@ -370,6 +381,11 @@ def scrub(text: str, row: RowPHI, pool: NamePool, vocab: frozenset,
             return " " + _age_replacement(float(m.group(1)), m.group(2)) + " "
         except (TypeError, ValueError):
             return " [AGE] "
+    t, n_age2 = AGE_WORD_PHRASE.subn(
+        lambda m: " " + _age_replacement(WORD_NUMBERS[m.group(1).lower()],
+                                         m.group(2)) + " ", t)
+    if n_age2:
+        hits["L5_age"] += n_age2
     t, n_age = AGE_PHRASE.subn(_age_sub, t)
     if n_age:
         hits["L5_age"] += n_age
@@ -387,15 +403,34 @@ def scrub(text: str, row: RowPHI, pool: NamePool, vocab: frozenset,
     def _cap(m):
         w = m.group(0)
         lw = w.lower()
-        # L3 runs on every casing; only L4 cares what the token looks like.
-        if lw in pool.patient or lw in pool.provider:
-            hits["L3_dict"] += 1
-            return "[NAME]"
-        # "Ewing's" and "Ewings" are the same eponym as "Ewing". Without this
-        # the possessive form is an unknown Titlecase token and gets redacted:
-        # measured 128 + 46 for Ewing, 33 for Crohn, 21 for Wilm.
+        # ORDINARY CLINICAL LANGUAGE WINS OVER THE NAME POOL, and the ordering
+        # matters more than anything else in this function.
+        #
+        # The pool holds every surname in the cohort, and a surprising number of
+        # them are ordinary words: the audit measured "prior" redacted 866
+        # times, "medical" 185, "not" 150, "iii" 60 (stage III), "ray" 67
+        # (chest X-ray), "wall" 66 (chest wall), "lam" 12 (the disease). With
+        # the pool checked first, "Prior abnormal chest CT" became "[NAME]
+        # abnormal chest CT" and "stage III" became "stage [NAME]".
+        #
+        # Vocabulary membership is a frequency threshold -- 5+ uses in public
+        # CT-RATE findings or 20+ in the de-identified pediatric findings -- so
+        # a hit here means the token is real clinical language, not a name.
+        #
+        # The residual this accepts: ANOTHER patient's or provider's surname
+        # that is also common clinical vocabulary, appearing in this patient's
+        # indication. Two things still cover it -- L1 already removed THIS
+        # patient's own name unconditionally, and L2's "Dr. X" rule removes the
+        # form a provider is actually named in. Trading those 1,076 measured
+        # false redactions for that residual is the right direction.
+        #
+        # "Ewing's" and "Ewings" reach the eponym list through _stems().
         if _known(lw, ALWAYS_KEEP, eponyms, vocab):
             return w
+        if lw in pool.patient or lw in pool.provider:
+            hits["L3_dict"] += 1
+            REDACTED_L3[lw] += 1       # audit only
+            return "[NAME]"
         if _looks_like_a_name(w):
             hits["L4_unknown"] += 1
             REDACTED[lw] += 1          # audit only; see tools/audit_redactions.py
@@ -438,6 +473,11 @@ def scrub_structural(text: str, max_words: int = 64,
             return " " + _age_replacement(float(m.group(1)), m.group(2)) + " "
         except (TypeError, ValueError):
             return " [AGE] "
+    t, n_age2 = AGE_WORD_PHRASE.subn(
+        lambda m: " " + _age_replacement(WORD_NUMBERS[m.group(1).lower()],
+                                         m.group(2)) + " ", t)
+    if n_age2:
+        hits["L5_age"] += n_age2
     t, n_age = AGE_PHRASE.subn(_age_sub, t)
     if n_age:
         hits["L5_age"] += n_age
