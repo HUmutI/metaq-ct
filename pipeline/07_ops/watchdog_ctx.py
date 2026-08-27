@@ -147,7 +147,7 @@ def inspect(jid: str, info: dict, prev: dict) -> tuple[list[str], dict]:
             # a long-but-real quiet stretch is visible before it trips.
             n = prev.get("stall_cycles", 0) + 1
             st["stall_cycles"] = n
-            if n >= 2:
+            if n >= _stall_cycles(info["name"]):
                 alerts.append(f"[{jid} {info['name']}] STALLED: log has not grown "
                               f"for {n} cycles (~{quiet_for * n:.0f} min, elapsed "
                               f"{info['elapsed']})")
@@ -195,6 +195,31 @@ def inspect(jid: str, info: dict, prev: dict) -> tuple[list[str], dict]:
     if aucs:
         st["auc"] = float(aucs[-1])
     return alerts, st
+
+
+# How many consecutive quiet cycles mean "stalled", per job family. Two cycles is
+# 20 minutes, which suits a trainer that prints a tqdm line every few seconds. It
+# does NOT suit a segmentation shard that prints once every 25 volumes: at ~90 s a
+# volume that is a 37-minute silence, and three healthy shards raised an alert on
+# every cycle this afternoon. An alert that is usually false is worse than none,
+# because the real one arrives among them and is not read.
+STALL_CYCLES = {
+    "cttrts": 6,      # TotalSegmentator shard, ~37 min between log lines
+    "ctvalts": 6,
+    "pedts": 6,
+    "pleuratr": 5,    # mask build, prints every 200 volumes
+    "cttrmask": 5,
+    "pedext": 5,      # vLLM extraction, long silent generate calls
+    "evalmx": 8,      # the 1,000-resample bootstrap prints nothing at all
+}
+DEFAULT_STALL_CYCLES = 2
+
+
+def _stall_cycles(name: str) -> int:
+    for k, v in STALL_CYCLES.items():
+        if k in name:
+            return v
+    return DEFAULT_STALL_CYCLES
 
 
 def cycle(track: list[str], kill_stalled: int,
