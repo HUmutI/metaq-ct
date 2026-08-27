@@ -43,6 +43,11 @@ from ts_roi import PEDS as ROI
 
 SPACING = (1.5, 1.5, 3.0)
 
+# Progress every 10 volumes, not 25. At ~90 s a volume the old interval put ~37
+# minutes between log lines, and the watchdog calls a job stalled after 30 -- so a
+# perfectly healthy shard raised an alert every cycle and the real alerts were
+# harder to see among them.
+
 
 def npz_to_nifti(npz_path: str, dst: str) -> None:
     arr = np.load(npz_path)["arr_0"]
@@ -115,7 +120,7 @@ def main() -> int:
                                  nr_thr_resamp=4, nr_thr_saving=4)
                 times.append(time.time() - t0)
                 ok += 1
-                if ok <= 3 or ok % 25 == 0:
+                if ok <= 3 or ok % 10 == 0:
                     med = sorted(times)[len(times) // 2]
                     print("[ts] %d/%d ok=%d last=%.1fs median=%.1fs eta=%.1fmin"
                           % (i + 1, len(files), ok, times[-1], med,
