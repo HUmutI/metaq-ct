@@ -79,7 +79,15 @@ case "$RUNG" in
   age_scalar)    export RAC_AGE_MODE=scalar ;;
 esac
 
-OUT=/temp_work/ch278233/runs/ctx_${RUNG}_seed${RAC_SEED}
+# LADDER_TAG keeps successive ladders apart. The first one (tag "ctx") ran with
+# the context modules effectively switched off -- beta inert at 0.0025 and the
+# conditioned half of the fusion at 2.7% of the general half -- so it is not a
+# failed run to be overwritten but a measurement in its own right: the
+# ARCHITECTURE'S contribution with the indication pathway closed. Keeping it is
+# what lets the next ladder attribute its gain to the indication rather than to
+# the wider bank.
+LADDER_TAG=${LADDER_TAG:-ctx}
+OUT=/temp_work/ch278233/runs/${LADDER_TAG}_${RUNG}_seed${RAC_SEED}
 mkdir -p "$OUT"
 export RAC_RESULTS_DIR=$OUT
 
@@ -100,8 +108,16 @@ export RAC_REGION_CACHE=/temp_work/ch278233/BCH_DATASET/LABELS27/region_cache.js
 export RAC_VOLUME_LIST_TRAIN=/temp_work/ch278233/PEDS_VOLLIST_TRAIN_clean.txt
 export RAC_VOLUME_LIST_VALID=/temp_work/ch278233/PEDS_VOLLIST_VALID_clean.txt
 export RAC_WARM_START_CKPT=/temp_work/ch278233/arcct_checkpoints/arcct_seed0.peds27.pt
+# patience 5 x VAL_EVERY 400 = 2,000 updates, and the first ladder stopped at
+# 3,200-4,000 of 6,000 with its best at 1,200-2,000 -- exactly on that boundary.
+# The conditioning starts at zero and needs training time to become anything, so
+# stopping it 2,000 updates after a best set while the gates were still closed
+# measures the wrong thing. Applied to EVERY rung, including ct_only, so the
+# ladder stays internally comparable.
+export RAC_EARLY_STOP_PATIENCE=${RAC_EARLY_STOP_PATIENCE_OVERRIDE:-8}
 
 echo "=== rung=$RUNG seed=$RAC_SEED task=$TASK on $(hostname) $(date) ==="
+echo "    tag=$LADDER_TAG beta_init=$RAC_CTX_BETA_INIT lr_mult=$RAC_CTX_LR_MULT patience=$RAC_EARLY_STOP_PATIENCE"
 echo "    ctx=$RAC_USE_CONTEXT_QFORMER c1=$RAC_CTX_C1 c2=$RAC_CTX_C2 "\
 "selfattn=$RAC_CTX_SELFATTN age=$RAC_AGE_MODE film_eps=$RAC_CTX_FILM_EPS"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader

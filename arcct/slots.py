@@ -201,7 +201,8 @@ class CtxConfig:
     c1: bool = True                 # indication -> query conditioning
     c2: bool = True                 # relevance weighting of the conditioned pool
     film_eps: float = 0.2           # gamma = 1 + eps*tanh(.), bounded away from 0
-    beta_init: float = -6.0         # b, with beta = softplus(b) >= 0 structurally
+    beta_init: float = -2.0         # b, with beta = softplus(b) >= 0 structurally
+    lr_mult: float = 20.0           # LR multiplier for the zero-init modules
     ind_dropout: float = 0.3
     cf_prob: float = 0.25
     selfattn: str = "split"         # "split" | "mask" | "none" (ablation)
@@ -221,7 +222,8 @@ class CtxConfig:
             c1=_env_flag("RAC_CTX_C1", "1"),
             c2=_env_flag("RAC_CTX_C2", "1"),
             film_eps=float(os.environ.get("RAC_CTX_FILM_EPS", "0.2")),
-            beta_init=float(os.environ.get("RAC_CTX_BETA_INIT", "-6.0")),
+            beta_init=float(os.environ.get("RAC_CTX_BETA_INIT", "-2.0")),
+            lr_mult=float(os.environ.get("RAC_CTX_LR_MULT", "20.0")),
             ind_dropout=float(os.environ.get("RAC_IND_DROPOUT", "0.3")),
             cf_prob=float(os.environ.get("RAC_CF_PROB", "0.25")),
             selfattn=os.environ.get("RAC_CTX_SELFATTN", "split").lower(),
@@ -261,6 +263,20 @@ class CtxConfig:
             problems.append(f"RAC_IND_DROPOUT={self.ind_dropout}, expected [0, 1)")
         if not 0.0 <= self.cf_prob <= 1.0:
             problems.append(f"RAC_CF_PROB={self.cf_prob}, expected [0, 1]")
+        if not -4.0 <= self.beta_init <= 4.0:
+            # softplus saturates: at b = -6, dbeta/db = sigmoid(-6) = 0.0025, so
+            # a 0.04 move in b -- which is what Adam delivers over 3,600 steps at
+            # this LR -- changes beta by 0.0001. Measured on the first ladder:
+            # beta went 0.00248 -> 0.0026 in 3,600 updates and the whole
+            # relevance mechanism sat inert. beta does NOT need to start near
+            # zero; the step-0 identity comes from the fusion's zero block.
+            problems.append(f"RAC_CTX_BETA_INIT={self.beta_init}: outside "
+                            "[-4, 4] the softplus gradient is dead and beta "
+                            "cannot train")
+        if self.lr_mult < 1.0:
+            problems.append(f"RAC_CTX_LR_MULT={self.lr_mult} < 1: the context "
+                            "modules start at ZERO and cannot learn slower than "
+                            "the warm-started parameters they sit next to")
         if self.max_ind_len < 8:
             problems.append(f"RAC_CTX_MAX_IND_LEN={self.max_ind_len} is shorter than a "
                             "typical indication (measured median 24 words)")
@@ -342,9 +358,13 @@ def _selftest() -> int:
     check(cfg.zind_combine == "mean", "mean is the default Z_ind combination")
     check(cfg.fusion == "concat" and cfg.age_mode == "band",
           "concat fusion and banded age are the defaults")
+    check(cfg.beta_init == -2.0 and cfg.lr_mult == 20.0,
+          "beta starts where its gradient is alive, and the zero-init modules "
+          "get their own LR")
     for name, value in (("RAC_CTX_SELFATTN", "bogus"), ("RAC_CTX_FILM_EPS", "0"),
                         ("RAC_CTX_ZIND_COMBINE", "concat"), ("RAC_IND_DROPOUT", "1.0"),
-                        ("RAC_CTX_FUSION", "sum"), ("RAC_AGE_MODE", "years")):
+                        ("RAC_CTX_FUSION", "sum"), ("RAC_AGE_MODE", "years"),
+                        ("RAC_CTX_BETA_INIT", "-6"), ("RAC_CTX_LR_MULT", "0.5")):
         old = os.environ.get(name)
         os.environ[name] = value
         try:

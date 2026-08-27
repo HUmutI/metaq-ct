@@ -689,15 +689,24 @@ def main():
             # e_int carries 10x weight decay: the interaction table starts at
             # exactly zero and should stay there unless it pays for itself.
             e_int_id = {id(qformer_module.context.e_int)}
+            # The context modules start at EXACTLY ZERO -- that is what buys the
+            # step-0 identity -- and they were given the same learning rate as a
+            # warm-started ResNet. The first ladder shows what that costs:
+            # |W_ind|/|W_gen| reached 0.027 after 3,600 updates, so the
+            # conditioned half of the fusion carried under 3% of the general
+            # half, and c1_xattn / c1_full / c2 came out identical seed by seed
+            # because the gates separating them never opened.
+            ctx_lr = VISION_LR * CTX_CFG.lr_mult
             groups_to_add.append({"params": inherited, "lr": VISION_LR,
                                   "weight_decay": WEIGHT_DECAY})
             groups_to_add.append({"params": [p for p in ctx_params if id(p) not in e_int_id],
-                                  "lr": VISION_LR, "weight_decay": WEIGHT_DECAY})
+                                  "lr": ctx_lr, "weight_decay": WEIGHT_DECAY})
             groups_to_add.append({"params": [qformer_module.context.e_int],
-                                  "lr": VISION_LR, "weight_decay": WEIGHT_DECAY * 10.0})
+                                  "lr": ctx_lr, "weight_decay": WEIGHT_DECAY * 10.0})
             print(f"[RAC] Q-Former params: inherited {sum(p.numel() for p in inherited):,} "
-                  f"| context {sum(p.numel() for p in ctx_params):,} "
-                  f"(clipped separately)")
+                  f"@ lr={VISION_LR:.2e} | context "
+                  f"{sum(p.numel() for p in ctx_params):,} @ lr={ctx_lr:.2e} "
+                  f"({CTX_CFG.lr_mult:g}x, zero-init) -- clipped separately")
         else:
             groups_to_add.append({"params": qf_params, "lr": VISION_LR,
                                   "weight_decay": WEIGHT_DECAY})

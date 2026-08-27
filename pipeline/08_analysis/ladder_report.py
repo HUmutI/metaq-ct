@@ -137,6 +137,8 @@ def queue_state() -> dict[str, int]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--seeds", type=int, default=3)
+    ap.add_argument("--tag", default="ctx",
+                    help="ladder tag; the run dirs are <tag>_<rung>_seed<n>")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args()
 
@@ -144,7 +146,7 @@ def main() -> int:
     for rung in RUNGS:
         cells = []
         for seed in range(a.seeds):
-            d = os.path.join(RUNS, f"ctx_{rung}_seed{seed}")
+            d = os.path.join(RUNS, f"{a.tag}_{rung}_seed{seed}")
             auc, at = best_auc(d) if os.path.isdir(d) else (None, None)
             reached = last_update(d) if os.path.isdir(d) else 0
             m = log_tail_metrics(rung, seed) if os.path.isdir(d) else {}
@@ -170,7 +172,7 @@ def main() -> int:
         return 0
 
     q = queue_state()
-    print(f"queue: {q or 'no ctxrung tasks'}\n")
+    print(f"ladder '{a.tag}'   queue: {q or 'no ctxrung tasks'}\n")
     print(f"{'rung':<15s} {'n':>2s} {'mean AUC':>9s} {'sd':>7s}  seeds  (x@n = still running at update n, excluded)")
     print("-" * 78)
     base = next((r for r in table if r["rung"] == "ct_only"), None)
