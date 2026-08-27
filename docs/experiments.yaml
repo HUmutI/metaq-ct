@@ -87,6 +87,22 @@ groups:
       ct_only on the SAME split. The joint baseline is not redundant: CT-RATE
       outnumbers pediatrics six to one there, and a configuration that wins on
       7,001 pediatric volumes is not thereby a winner in that regime.
+  - id: ctrate_only
+    title: "CT-RATE only: the adult gate"
+    note: >-
+      The run that has to clear 0.8574 on the 18 classes CT-RATE publishes. No
+      pediatric data, published 18-class labels, warm-started from the published
+      adult checkpoint (qformer.queries (30,768), so the context bank appends one
+      row to reach 31). ct_only runs beside it on the same data, because 0.8574
+      came from THEIR training run and without our own control a result of 0.855
+      could not be told apart from a recipe that fails to reproduce ARC-CT.
+  - id: labels_v3
+    title: "Label repair (V3) and the gold standard"
+    note: >-
+      A 200-report gold standard, annotated five times independently, against
+      which the pediatric label definitions were repaired. Qwen against the gold
+      agrees on 95.7% of 5,400 cells at mean kappa 0.855. The gains are
+      concentrated on the classes two text-only audits had already proved broken.
   - id: ctx3
     title: "Masked ablation (ctx3)"
     note: >-
@@ -432,6 +448,61 @@ experiments:
       pipeline/05_train/34_train_joint_ctx.sbatch`, which runs it and the joint
       baseline in one array.
 
+  # --------------------------------------------------------- ct-rate only
+  - id: ctrate/ct_only
+    group: ctrate_only
+    arch: ARC-CT
+    cohort: CT-RATE 42,544
+    classes: 18 (published)
+    masks: CT-RATE, gated at 99%
+    runs: [ctrate_ct_only_seed0, ctrate_ct_only_seed1, ctrate_ct_only_seed2]
+    patience: 4
+    val_every: 1200
+    status: queued
+    finding: >-
+      The control, and it is not a formality: it must come back near the published
+      checkpoint's own 0.8547 for the context arm's delta to mean anything.
+  - id: ctrate/c2
+    group: ctrate_only
+    arch: context
+    cohort: CT-RATE 42,544
+    classes: 18 (published)
+    masks: CT-RATE, gated at 99%
+    runs: [ctrate_c2_seed0, ctrate_c2_seed1, ctrate_c2_seed2]
+    patience: 4
+    val_every: 1200
+    status: queued
+    finding: >-
+      Blocked on mask coverage, deliberately. configs/stage2.env sets
+      RAC_REQUIRE_MASK=1 and dataset.py drops any training volume without a mask,
+      so at today's 67% this would have trained on 28,494 volumes instead of
+      42,544 -- against a published model that had all of them -- and said so in
+      one line of log. check_mask_coverage.py now exits 78 below 99%.
+      The 18-class step-0 identity gate has PASSED: 49 slots over 31 rows,
+      Z_final == Z_gen exactly, unconditioned tokens matching the 39-slot model to
+      0.0e+00, preflight clean.
+
+  # ------------------------------------------------------------ labels V3
+  - id: V3_labels
+    group: labels_v3
+    arch: n/a
+    cohort: peds 8,817 reports
+    classes: 27
+    masks: "--"
+    runs: []
+    status: queued
+    finding: >-
+      Extraction running (8 shards, 3 at a time). Definitions repaired against the
+      gold standard, and the single most important change is not per class: the
+      evidence citation became a GATE rather than a justification -- if no sentence
+      states the finding itself, the label is 0. Kappa gains land exactly where two
+      text-only audits said they would: Tree-in-bud 0.844 to 0.956, Arterial wall
+      calcification 0.689 to 0.817, Lymphadenopathy 0.676 to 0.780, Peribronchial
+      thickening 0.819 to 0.902. Losses cluster on classes stated diffusely
+      (Bronchiectasis, Consolidation, Lung opacity) and are the same trade that
+      produced the gains. Whether any of it moves AUC is untested -- that is the
+      next experiment, not this one.
+
   # ---------------------------------------------------------------- ctx3
   - id: ctx3/masked
     group: ctx3
@@ -454,6 +525,37 @@ experiments:
       fitted to a subsample selected by acquisition order.
 
 journal:
+  - date: 2026-08-27
+    title: The routing penalty is two broken regions, and the fix is measured not assumed
+    text: >-
+      Region 8 is not the pleural space. On 400 volumes stratified for the class it
+      reads +6 HU on pneumothorax positives against -98 HU on negatives -- 104 HU
+      the WRONG way for an air finding, with the region twice the size. The shell is
+      derived by dilating the lung union, so its geometry is a function of the
+      pathology: TotalSegmentator folds pneumothorax air into the lung field, the
+      shell lands further out in the chest wall, and the pooled feature ends up
+      anti-correlated with the finding. Rebuilt from the bony ribcage instead, which
+      does not move when a lung collapses. Being verified on a rebuilt sample before
+      any of the 47k masks are committed to it.
+  - date: 2026-08-27
+    title: The CT-RATE-only run is set up and its 18-class gate passes
+    text: >-
+      Assets built and asserted, architecture verified at 18 classes (49 slots over
+      31 rows, step-0 identity exact, preflight clean). The gate found three real
+      faults first: RAC_FOCAL_CLASSES arrived EMPTY because an unquoted value with a
+      space broke the env sourcing, so top-K focal pooling was off in every adult-
+      recipe run; the age-band check refused an adult-only cohort on principle; and
+      the counterfactual sampler rejected only the same accession, not the same
+      text, so L_cf routinely compared a prediction with itself.
+  - date: 2026-08-27
+    title: The sbatch scripts had locked themselves out of 24 A100s
+    text: >-
+      Every GPU launcher asked for gres=gpu:large:1, and the A100s are gpu:xlarge --
+      a gpu:large request can never match one, and bch-gpu-xlarge was not in the
+      partition list either. gpu:large had been chosen to avoid the 24 GB TITANs
+      that OOM; those are gpu-1-0 and gpu-2-0, the only medium nodes across all
+      three partitions, so excluding them by name does the same job without giving
+      up the pool this account contends least for.
   # Dated record. Add an entry whenever something changes what we believe or what
   # is running -- a result, a fix that invalidates a number, a decision. Dates in
   # the experiment tables are harvested from disk; these are written by hand

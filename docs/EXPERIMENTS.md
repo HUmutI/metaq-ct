@@ -4,7 +4,7 @@ Every run of this project: finished, in flight, and queued. **Generated** by
 `tools/exp_log.py` -- do not edit the tables by hand, edit `docs/experiments.yaml`
 and re-render. Every AUC below is read off disk at render time.
 
-Rendered 2026-08-27 19:18 UTC.
+Rendered 2026-08-27 22:18 UTC.
 
 Two architectures appear here and they must never be compared casually:
 
@@ -144,10 +144,10 @@ The rerun with beta_init -2, a 20x learning-rate multiplier on the zero-init con
 | **ctx2/ct_only** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 2/3 | 0.7909 ±0.0018 | partial |
 | **ctx2/concat** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 3/3 | 0.7854 ±0.0025 | done |
 | **ctx2/c1_xattn** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 1/3 | 0.7962 | partial |
-| **ctx2/c1_full** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | RUNNING |
+| **ctx2/c1_full** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 1/3 | 0.7960 | partial |
 | **ctx2/c2** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | queued |
 | **ctx2/fusion_gated** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | queued |
-| **ctx2/isolation_off** | -- | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | queued |
+| **ctx2/isolation_off** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | queued |
 | **ctx2/age_scalar** | -- | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | queued |
 
 `ctx2/ct_only`: 1 seed(s) died before update 3,200 and are excluded from the mean (`ctx2_ct_only_seed0`).
@@ -157,6 +157,10 @@ The rerun with beta_init -2, a 20x learning-rate multiplier on the zero-init con
 `ctx2/c1_xattn`: 2 seed(s) died before update 3,200 and are excluded from the mean (`ctx2_c1_xattn_seed1`, `ctx2_c1_xattn_seed2`).
 
 `ctx2/c1_full`: 2 seed(s) died before update 3,200 and are excluded from the mean (`ctx2_c1_full_seed1`, `ctx2_c1_full_seed2`).
+
+`ctx2/c2`: 3 seed(s) died before update 3,200 and are excluded from the mean (`ctx2_c2_seed0`, `ctx2_c2_seed1`, `ctx2_c2_seed2`).
+
+`ctx2/fusion_gated`: 3 seed(s) died before update 3,200 and are excluded from the mean (`ctx2_fusion_gated_seed0`, `ctx2_fusion_gated_seed1`, `ctx2_fusion_gated_seed2`).
 
 ## Joint context runs (the headline)
 
@@ -168,6 +172,29 @@ The winning rung retrained on the combined 49,545-volume split, alongside ct_onl
 | **joint/winner** | -- | context | peds + CT-RATE 49,545 · 27 | peds only | 0/0 | -- | planned |
 
 **joint/winner -- what it settled.** Waits on the ctx2 ladder to name a winner. Submitted as `sbatch --export=ALL,JOINT_RUNG=<winner> --array=0-5%3 pipeline/05_train/34_train_joint_ctx.sbatch`, which runs it and the joint baseline in one array.
+
+## CT-RATE only: the adult gate
+
+The run that has to clear 0.8574 on the 18 classes CT-RATE publishes. No pediatric data, published 18-class labels, warm-started from the published adult checkpoint (qformer.queries (30,768), so the context bank appends one row to reach 31). ct_only runs beside it on the same data, because 0.8574 came from THEIR training run and without our own control a result of 0.855 could not be told apart from a recipe that fails to reproduce ARC-CT.
+
+| experiment | dates | arch | cohort · classes | masks | seeds | val AUC | state |
+|---|---|---|---|---|---|---|---|
+| **ctrate/ct_only** | -- | ARC-CT | CT-RATE 42,544 · 18 (published) | CT-RATE, gated at 99% | 0/3 | -- | queued |
+| **ctrate/c2** | -- | context | CT-RATE 42,544 · 18 (published) | CT-RATE, gated at 99% | 0/3 | -- | queued |
+
+**ctrate/ct_only -- what it settled.** The control, and it is not a formality: it must come back near the published checkpoint's own 0.8547 for the context arm's delta to mean anything.
+
+**ctrate/c2 -- what it settled.** Blocked on mask coverage, deliberately. configs/stage2.env sets RAC_REQUIRE_MASK=1 and dataset.py drops any training volume without a mask, so at today's 67% this would have trained on 28,494 volumes instead of 42,544 -- against a published model that had all of them -- and said so in one line of log. check_mask_coverage.py now exits 78 below 99%. The 18-class step-0 identity gate has PASSED: 49 slots over 31 rows, Z_final == Z_gen exactly, unconditioned tokens matching the 39-slot model to 0.0e+00, preflight clean.
+
+## Label repair (V3) and the gold standard
+
+A 200-report gold standard, annotated five times independently, against which the pediatric label definitions were repaired. Qwen against the gold agrees on 95.7% of 5,400 cells at mean kappa 0.855. The gains are concentrated on the classes two text-only audits had already proved broken.
+
+| experiment | dates | arch | cohort · classes | masks | seeds | val AUC | state |
+|---|---|---|---|---|---|---|---|
+| **V3_labels** | -- | n/a | peds 8,817 reports · 27 | -- | 0/0 | -- | queued |
+
+**V3_labels -- what it settled.** Extraction running (8 shards, 3 at a time). Definitions repaired against the gold standard, and the single most important change is not per class: the evidence citation became a GATE rather than a justification -- if no sentence states the finding itself, the label is 0. Kappa gains land exactly where two text-only audits said they would: Tree-in-bud 0.844 to 0.956, Arterial wall calcification 0.689 to 0.817, Lymphadenopathy 0.676 to 0.780, Peribronchial thickening 0.819 to 0.902. Losses cluster on classes stated diffusely (Bronchiectasis, Consolidation, Lung opacity) and are the same trade that produced the gains. Whether any of it moves AUC is untested -- that is the next experiment, not this one.
 
 ## Masked ablation (ctx3)
 
@@ -182,6 +209,12 @@ The winner rerun with anatomy masks on the adult half too. Held separate from th
 ## Journal
 
 Dated record of what happened and what it changed. Newest first.
+
+**2026-08-27 — The routing penalty is two broken regions, and the fix is measured not assumed**  Region 8 is not the pleural space. On 400 volumes stratified for the class it reads +6 HU on pneumothorax positives against -98 HU on negatives -- 104 HU the WRONG way for an air finding, with the region twice the size. The shell is derived by dilating the lung union, so its geometry is a function of the pathology: TotalSegmentator folds pneumothorax air into the lung field, the shell lands further out in the chest wall, and the pooled feature ends up anti-correlated with the finding. Rebuilt from the bony ribcage instead, which does not move when a lung collapses. Being verified on a rebuilt sample before any of the 47k masks are committed to it.
+
+**2026-08-27 — The CT-RATE-only run is set up and its 18-class gate passes**  Assets built and asserted, architecture verified at 18 classes (49 slots over 31 rows, step-0 identity exact, preflight clean). The gate found three real faults first: RAC_FOCAL_CLASSES arrived EMPTY because an unquoted value with a space broke the env sourcing, so top-K focal pooling was off in every adult- recipe run; the age-band check refused an adult-only cohort on principle; and the counterfactual sampler rejected only the same accession, not the same text, so L_cf routinely compared a prediction with itself.
+
+**2026-08-27 — The sbatch scripts had locked themselves out of 24 A100s**  Every GPU launcher asked for gres=gpu:large:1, and the A100s are gpu:xlarge -- a gpu:large request can never match one, and bch-gpu-xlarge was not in the partition list either. gpu:large had been chosen to avoid the 24 GB TITANs that OOM; those are gpu-1-0 and gpu-2-0, the only medium nodes across all three partitions, so excluding them by name does the same job without giving up the pool this account contends least for.
 
 **2026-08-27 — Half of CT-RATE has an indication, not a quarter**  The user challenged the 24% figure and was right. classify() required three words, which fits the pediatric requisitions (median 24 words) and discards the adult ones, which are often a single question. Coverage is 48.7%. An assertion encoding the same three-word rule had to be corrected too, since it blocked the fix.
 
