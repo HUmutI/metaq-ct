@@ -1,0 +1,136 @@
+# Eponyms that are clinically load-bearing in a pediatric indication. Redacting
+# these removes the half of the sentence that says what the scan is for.
+#
+# TWO safety properties make this list safe to extend:
+#
+#  1. the row-targeted layer runs FIRST, so a patient whose own surname is on
+#     this list is redacted before the whitelist is ever consulted;
+#  2. load time drops every entry that also appears in the cohort's name pool,
+#     and prints how many were dropped. An eponym that is also a real patient or
+#     provider surname in THIS dataset never reaches the whitelist.
+#
+# Property 2 is why the list can include ordinary-looking surnames. It is not a
+# licence to add every eponym in medicine: entries here should be words the
+# over-redaction audit actually measured, or syndromes a pediatric chest CT
+# requisition genuinely names. Entries that are also common English words
+# (charge, still, job, brown, young) are deliberately EXCLUDED -- their eponym
+# use is rare and their cost as a whitelist entry is not.
+#
+# Seeded from the first audit, which measured fraumeni at 57 redactions.
+fraumeni
+li-fraumeni
+beckwith
+wiedemann
+peutz
+jeghers
+gorlin
+rubinstein
+taybi
+sotos
+peutz-jeghers
+bannayan
+ruvalcaba
+cowden
+mccune
+albright
+ollier
+maffucci
+rothmund
+fanconi
+nijmegen
+seckel
+blackfan
+shwachman
+kostmann
+griscelli
+hermansky
+pudlak
+digeorge
+velocardiofacial
+alagille
+kabuki
+vacterl
+goldenhar
+klippel
+trenaunay
+sturge
+rendu
+hippel
+lindau
+recklinghausen
+bourneville
+emery
+dreifuss
+landouzy
+dejerine
+friedreich
+guillain
+myasthenia
+mcardle
+tarui
+danon
+barth
+kearns
+sayre
+alpers
+zellweger
+refsum
+krabbe
+canavan
+sandhoff
+fabry
+wolman
+menkes
+alport
+bartter
+gitelman
+liddle
+zollinger
+ellison
+boerhaave
+plummer
+vinson
+budd
+chiari
+caroli
+byler
+crigler
+najjar
+kasabach
+merritt
+behcet
+henoch
+schonlein
+schoenlein
+buerger
+libman
+dressler
+loeffler
+katayama
+ghon
+rasmussen
+swyer
+macleod
+mounier
+kuhn
+lymphangioleiomyomatosis
+erdheim
+rosai
+dorfman
+castleman
+kikuchi
+kimura
+heerfordt
+lofgren
+loefgren
+caplan
+hamman
+goodpasture
+wegener
+lemierre
+gradenigo
+lhermitte
+pancoast
+virchow
+troisier
+krukenberg

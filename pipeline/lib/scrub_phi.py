@@ -74,6 +74,9 @@ STRUCTURAL = [
     (re.compile(r"\b(?:Dr|Doctor|Prof|Mr|Mrs|Ms|Miss)\.?\s+[A-Z][A-Za-z'\-]+"
                 r"(?:\s+[A-Z][A-Za-z'\-]+)?"), "[NAME]"),
     (re.compile(r"\b(?:room|bed|ward|suite|floor)\s*#?\s*[A-Z]?\d+[A-Z]?\b", re.I), "[LOC]"),
+    # A bare month name. It is a date fragment, not a name, and tagging it
+    # [NAME] both mislabels it and inflates the over-redaction count.
+    (rf"(?i)\b(?:{MONTHS})\b", "[DATE]"),
     # Last sweep for a stray four-digit year. The structured rules above cover
     # the renderings that carry a day or a month name; this catches the ones
     # that reached the text some other way. The unit lookahead keeps "2020 HU"
@@ -102,6 +105,21 @@ AGE_UNIT = {"year": 1.0, "yr": 1.0, "y/o": 1.0, "yo": 1.0,
 # would let "DELACROIX" and "delacroix" walk straight through the dictionary
 # layer, and a name typed in caps is still a name.
 WORD_TOKEN = re.compile(r"\b[A-Za-z][A-Za-z]{2,}(?:[-'][A-Za-z]+)*\b")
+
+
+def _stems(lw: str) -> tuple[str, ...]:
+    """The token plus its possessive and plural forms, for vocabulary lookup."""
+    out = [lw]
+    for suf in ("'s", "\u2019s", "s'", "s"):
+        if lw.endswith(suf) and len(lw) > len(suf) + 1:
+            out.append(lw[: -len(suf)])
+    if lw.endswith("es") and len(lw) > 4:
+        out.append(lw[:-2])
+    return tuple(out)
+
+
+def _known(lw: str, *vocabularies) -> bool:
+    return any(st in v for st in _stems(lw) for v in vocabularies)
 
 
 def _looks_like_a_name(w: str) -> bool:
@@ -136,6 +154,20 @@ ALWAYS_KEEP = {
     "there", "this", "that", "these", "those", "was", "were", "has", "had",
     "not", "now", "also", "seen", "noted", "found", "given", "per", "due",
     "secondary", "primary", "unknown", "none", "other", "same", "than", "then",
+    # Function words. The audit measured "she" redacted 132 times: a pronoun at
+    # the start of a sentence is Titlecase, is not radiology vocabulary, and
+    # therefore looked exactly like an unknown surname.
+    "she", "her", "hers", "herself", "his", "him", "himself", "its", "our",
+    "their", "them", "they", "who", "whom", "whose", "which", "what", "when",
+    "where", "why", "how", "both", "each", "every", "some", "any", "all",
+    "off", "into", "onto", "over", "under", "above", "below", "again",
+    "completed", "complete", "ongoing", "pending", "requested", "requisition",
+    "research", "protocol", "study", "studies", "scan", "scans", "imaging",
+    "image", "images", "report", "reported", "note", "notes", "please",
+    "consider", "consult", "consultation", "referral", "workup", "eval",
+    "evaluate", "evaluated", "evaluating", "reassess", "restage", "restaging",
+    "staging", "stage", "interval", "change", "changes", "stable", "unchanged",
+    "improved", "improving", "worse", "worsening", "resolved", "resolving",
 }
 
 # Diseases and syndromes named after people. Redacting these would remove the
@@ -160,6 +192,12 @@ DEFAULT_EPONYMS = {
     "blastomyces", "toxoplasma", "cytomegalovirus", "varicella", "influenza",
     "covid", "sars", "rsv",
 }
+
+
+# What the fail-closed layer decided to redact, accumulated across a run. Used
+# only by the over-redaction audit: a word that is being redacted hundreds of
+# times is a vocabulary gap, not a name.
+REDACTED: Counter = Counter()
 
 
 class ScrubResult(NamedTuple):
@@ -225,6 +263,29 @@ def load_wordlist(path: str) -> frozenset:
             if ln:
                 out.add(ln)
     return frozenset(out)
+
+
+def safe_eponyms(eponyms: Iterable[str], pool: NamePool,
+                 verbose: bool = True) -> frozenset:
+    """Drop every eponym that is also a real surname IN THIS COHORT.
+
+    Curating an eponym list by intuition does not work: Miller-Fisher, Brown-
+    Sequard, Dubin-Johnson and Still disease are all real, and Miller, Fisher,
+    Brown, Johnson and Still are all ordinary surnames. Rather than guess which
+    ones are safe, intersect the list with the cohort's own name pool and remove
+    the overlap. What survives is, by construction, not a patient or provider
+    name in this dataset -- so an entry can never turn the whitelist into a leak.
+
+    The row-targeted layer already covers the case where the eponym is THIS
+    patient's surname; this covers the case where it is some other patient's.
+    """
+    names = pool.patient | pool.provider
+    keep = {e for e in eponyms if e not in names}
+    dropped = sorted(set(eponyms) - keep)
+    if verbose and dropped:
+        print(f"[eponyms] {len(dropped)} dropped for colliding with a real name "
+              f"in this cohort: {dropped[:10]}{' ...' if len(dropped) > 10 else ''}")
+    return frozenset(keep)
 
 
 def normalise(text: str) -> str:
@@ -302,10 +363,13 @@ def scrub(text: str, row: RowPHI, pool: NamePool, vocab: frozenset,
 
     # -- L5 age BEFORE the structural digit rules, or [ID] eats the number -
     def _age_sub(m):
+        # Padded: the pattern eats the trailing separator of "2-month-old with",
+        # which would otherwise produce "[AGE <1y]with". _flatten() collapses the
+        # extra spaces at the end.
         try:
-            return _age_replacement(float(m.group(1)), m.group(2))
+            return " " + _age_replacement(float(m.group(1)), m.group(2)) + " "
         except (TypeError, ValueError):
-            return "[AGE]"
+            return " [AGE] "
     t, n_age = AGE_PHRASE.subn(_age_sub, t)
     if n_age:
         hits["L5_age"] += n_age
@@ -327,10 +391,14 @@ def scrub(text: str, row: RowPHI, pool: NamePool, vocab: frozenset,
         if lw in pool.patient or lw in pool.provider:
             hits["L3_dict"] += 1
             return "[NAME]"
-        if lw in ALWAYS_KEEP or lw in eponyms or lw in vocab:
+        # "Ewing's" and "Ewings" are the same eponym as "Ewing". Without this
+        # the possessive form is an unknown Titlecase token and gets redacted:
+        # measured 128 + 46 for Ewing, 33 for Crohn, 21 for Wilm.
+        if _known(lw, ALWAYS_KEEP, eponyms, vocab):
             return w
         if _looks_like_a_name(w):
             hits["L4_unknown"] += 1
+            REDACTED[lw] += 1          # audit only; see tools/audit_redactions.py
             return "[NAME]"
         return w
 
@@ -367,9 +435,9 @@ def scrub_structural(text: str, max_words: int = 64,
 
     def _age_sub(m):
         try:
-            return _age_replacement(float(m.group(1)), m.group(2))
+            return " " + _age_replacement(float(m.group(1)), m.group(2)) + " "
         except (TypeError, ValueError):
-            return "[AGE]"
+            return " [AGE] "
     t, n_age = AGE_PHRASE.subn(_age_sub, t)
     if n_age:
         hits["L5_age"] += n_age

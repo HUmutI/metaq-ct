@@ -45,8 +45,8 @@ sys.path.insert(0, LIB)
 
 from prepare_reports import indication_of                       # noqa: E402
 from scrub_phi import (DEFAULT_EPONYMS, NamePool, RowPHI, build_clinical_vocab,  # noqa: E402
-                       build_name_pool, classify, load_wordlist, normalise, scrub,
-                       scrub_structural)
+                       build_name_pool, classify, load_wordlist, normalise,
+                       safe_eponyms, scrub, scrub_structural)
 
 PEDS_REPORTS = "/temp_work/ch278233/BCH_DATASET/reports_8k.csv"
 PEDS_MAP = "/temp_work/ch278233/BCH_DATASET/LABELS/volume_map.tsv"
@@ -58,6 +58,7 @@ CTRATE = [
 OUT_DIR = "/temp_work/ch278233/CONTEXT"
 OUT = os.path.join(OUT_DIR, "indication.csv")
 EPONYM_FILE = os.path.join(LIB, "eponyms.txt")
+CLINICAL_FILE = os.path.join(LIB, "clinical_terms.txt")
 
 DATE_COLS = ("Ordered Date", "Scheduled Date", "Patient Arrived Date",
              "Exam Started Date", "Exam Completed Date", "Report Created Date",
@@ -103,6 +104,47 @@ def load_ctrate_vocab() -> frozenset:
     except Exception as exc:                                  # noqa: BLE001
         print(f"[vocab] WARNING could not add the label vocabulary: {exc}")
     print(f"[vocab] {len(vocab):,} words from CT-RATE (public) + the label schema")
+    return frozenset(vocab)
+
+
+def peds_clinical_vocab(pool: NamePool, min_count: int = 20) -> frozenset:
+    """Pediatric clinical vocabulary, from the DE-IDENTIFIED report text.
+
+    CT-RATE alone is too thin for this corpus: the audit measured restaging
+    (206), evali (28) and regorafenib (21) being redacted as unknown names,
+    none of which appears in adult CT-RATE findings.
+
+    Three properties keep this from whitelisting a patient name:
+      * the source is reports_arcct.csv -- findings and impressions AFTER
+        de-identification, not the PHI spreadsheet;
+      * every token in the cohort's name pool is subtracted;
+      * every token that /usr/share/dict/words lists as a PROPER noun (a
+        capitalised entry) is subtracted, which removes place and person names
+        the pool does not cover.
+    A word still has to occur 20+ times across 8,817 reports to qualify.
+    """
+    if not os.path.isfile(PEDS_ARCCT):
+        print(f"[vocab] no {PEDS_ARCCT}; skipping the pediatric vocabulary")
+        return frozenset()
+    csv.field_size_limit(10 ** 9)
+    texts = []
+    with open(PEDS_ARCCT, newline="", encoding="utf-8", errors="replace") as fh:
+        for row in csv.DictReader(fh):
+            texts.append(row.get("Findings_EN", ""))
+            texts.append(row.get("Impressions_EN", ""))
+    vocab = set(build_clinical_vocab(texts, min_count=min_count))
+    before = len(vocab)
+    vocab -= (pool.patient | pool.provider)
+    proper = set()
+    for path in ("/usr/share/dict/words",):
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                proper = {ln.strip().lower() for ln in fh if ln[:1].isupper()}
+            break
+    vocab -= proper
+    print(f"[vocab] {len(vocab):,} pediatric words (>= {min_count} uses); "
+          f"dropped {before - len(vocab):,} for colliding with a name in the "
+          f"cohort or with a proper noun")
     return frozenset(vocab)
 
 
@@ -288,6 +330,14 @@ def main() -> int:
         with open(PEDS_REPORTS, newline="", encoding="utf-8", errors="replace") as fh:
             peds_raw = list(csv.DictReader(fh))
         pool = build_name_pool(peds_raw)
+        # Enforced, not curated: an eponym that is also a surname in this cohort
+        # is removed from the whitelist before it can protect anything.
+        eponyms = safe_eponyms(eponyms, pool)
+        vocab = vocab | peds_clinical_vocab(pool)
+        # Curated terms go through the SAME collision guard as the eponyms: an
+        # entry that is also a surname in this cohort never reaches the
+        # whitelist, so extending the list cannot open a leak.
+        vocab = vocab | safe_eponyms(load_wordlist(CLINICAL_FILE), pool)
         p_rows, hits = build_peds(vocab, eponyms)
         rows += p_rows
     if a.cohort in ("ctrate", "both"):
