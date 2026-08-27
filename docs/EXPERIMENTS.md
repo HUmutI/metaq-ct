@@ -4,7 +4,7 @@ Every run of this project: finished, in flight, and queued. **Generated** by
 `tools/exp_log.py` -- do not edit the tables by hand, edit `docs/experiments.yaml`
 and re-render. Every AUC below is read off disk at render time.
 
-Rendered 2026-08-27 18:10 UTC.
+Rendered 2026-08-27 19:02 UTC.
 
 Two architectures appear here and they must never be compared casually:
 
@@ -106,7 +106,7 @@ Held-out evaluation:
 | P0_routing | `combined/V1` | 6362 | 27 | 0.7821 | 0.7747–0.7891 | 0.7469 | -0.0353 |
 | P0_routing | `combined/V5` | 6362 | 27 | 0.7841 | 0.7763–0.7910 | 0.7408 | -0.0433 |
 
-**P0_routing -- what it settled.** Settled the question the next paper was built on. Routing the read-out through the anatomy masks costs accuracy in BOTH cohorts and by nearly the same amount -- on the same checkpoint and the same 27 classes, CT-RATE falls 0.7991 to 0.7617 (-0.0375) and pediatrics 0.8005 to 0.7651 (-0.0354), with a per-class correlation of r = +0.908. The penalty is a property of the method, not of children. The two biggest losers, Pneumothorax (-0.378) and Bone lesion (-0.269), route to the two regions we derived rather than segmented. One loose end: ctrate/V1 reads 0.7954 against ctrate/V1_masked's 0.7991 on the same checkpoint, labels and order -- config drift between two evaluation runs, unexplained, and it does not touch the paired -0.0375.
+**P0_routing -- what it settled.** The routing penalty is real and it is NOT pediatric -- on the same checkpoint and the same 27 classes, CT-RATE falls 0.7991 to 0.7617 (-0.0375) and pediatrics 0.8005 to 0.7651 (-0.0354). But the macro number badly misdescribes what happens, and the per-class breakdown is the finding. TWO classes account for roughly two thirds of the entire penalty: Pneumothorax 0.695 to 0.317 and Bone lesion 0.616 to 0.347. Those are BELOW CHANCE. A model merely looking in the wrong place lands near 0.5; below 0.5 is systematic inversion, and it reproduces in every cohort and every checkpoint measured. Both route to the two regions we DERIVED rather than segmented with TotalSegmentator -- the pleural shell and bone. Drop those two and the penalty falls to -0.0146 on CT-RATE and -0.0159 on pediatrics, with 7 of the remaining 24 classes IMPROVING under routing (Pulmonary metastases +0.061, Pleural thickening +0.018). Three classes are never routed at all and are identical by construction. A structural contributor to the residual: _routed_probs scores organ_lat against the class prompts, but training aligns organ_lat to REGION SENTENCES (L_org) and the class prompts to the GLOBAL latent (L_cls). That pairing is never trained, so part of the remaining -0.015 is a read-out mismatch rather than a statement about anatomy. Two loose ends. ctrate/V1 reads 0.7954 against ctrate/V1_masked's 0.7991 on the same checkpoint, labels and order -- config drift between two evaluation runs, unexplained; it does not touch the paired -0.0375. And the combined cells lose more than either cohort alone (-0.0353, and -0.0475 when restricted to masked rows). The obvious explanation -- that partial mask coverage mixes two score scales in one ranking -- was tested and is wrong, since restricting to masked rows makes it worse, not better. Unexplained.
 
 ## Context ladder, first pass (ctx)
 
@@ -143,7 +143,7 @@ The rerun with beta_init -2, a 20x learning-rate multiplier on the zero-init con
 |---|---|---|---|---|---|---|
 | **ctx2/ct_only** | context | peds 7,001 · 27 | peds 100% | 2/3 | 0.7909 ±0.0018 | partial |
 | **ctx2/concat** | context | peds 7,001 · 27 | peds 100% | 3/3 | 0.7854 ±0.0025 | done |
-| **ctx2/c1_xattn** | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | RUNNING |
+| **ctx2/c1_xattn** | context | peds 7,001 · 27 | peds 100% | 1/3 | 0.7962 | partial |
 | **ctx2/c1_full** | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | RUNNING |
 | **ctx2/c2** | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | queued |
 | **ctx2/fusion_gated** | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | queued |
@@ -154,7 +154,9 @@ The rerun with beta_init -2, a 20x learning-rate multiplier on the zero-init con
 
 **ctx2/ct_only -- what it settled.** The architecture-only control: the context model with the Q-Former's context path switched off, so it is the published model under the new code path. Every other rung is a delta against this, not against V1.
 
-`ctx2/c1_xattn`: 1 seed(s) died before update 3,200 and are excluded from the mean (`ctx2_c1_xattn_seed2`).
+`ctx2/c1_xattn`: 2 seed(s) died before update 3,200 and are excluded from the mean (`ctx2_c1_xattn_seed1`, `ctx2_c1_xattn_seed2`).
+
+`ctx2/c1_full`: 1 seed(s) died before update 3,200 and are excluded from the mean (`ctx2_c1_full_seed2`).
 
 ## Joint context runs (the headline)
 
@@ -181,7 +183,9 @@ The winner rerun with anatomy masks on the adult half too. Held separate from th
 
 **The seed band is 0.0046**  Three seeds of an identical V1 configuration give sd = 0.0046 on pediatric validation macro AUC. A ladder delta below roughly 0.0092 is inside that band and is not a difference. This is measured on the V1 recipe, not the context recipe, and is the most honest estimate available rather than an exact one.
 
-**Anatomy routing costs accuracy in adults as much as in children**  Same checkpoint, same 27 classes: CT-RATE 0.7991 to 0.7617 (-0.0375), pediatrics 0.8005 to 0.7651 (-0.0354), per-class correlation r = +0.908. The routing penalty is a property of the method, not of the pediatric cohort.
+**Two broken regions, not a broken idea**  The -0.0375 routing penalty is not spread across the label set. Pneumothorax (0.695 to 0.317) and Bone lesion (0.616 to 0.347) fall BELOW CHANCE and carry about two thirds of it, in every cohort and every checkpoint. Below 0.5 is inversion, not misplaced attention -- looking in the wrong place gives 0.5. Both route to the two regions we derived rather than segmented. Excluding them the penalty is -0.0146 (CT-RATE) and -0.0159 (pediatrics), and 7 of the remaining 24 classes improve under routing. Fix those two regions before concluding anything about anatomy routing as a method.
+
+**The routed read-out uses a pairing that was never trained**  Training aligns organ_lat to region sentences (L_org) and the class prompts to the global latent (L_cls). Evaluation scores organ_lat against the class prompts. Part of the residual routing penalty is therefore a read-out mismatch and not a property of anatomy routing.
 
 **Validation AUC is not a result**  The val AUC columns are what the training loop selected checkpoints on. They are computed on the split the model stopped early against, so they are optimistically biased by construction. Only eval_matrix numbers are reportable, and only with the patient-clustered bootstrap CI beside them.
 

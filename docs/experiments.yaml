@@ -212,16 +212,32 @@ experiments:
     evals: [ctrate/V1_masked, ctrate/V5_masked, ctrate/C47mix_masked, ctrate/C47harm_masked, peds/V1, peds/V5, combined/V1, combined/V5]
     status: planned
     finding: >-
-      Settled the question the next paper was built on. Routing the read-out
-      through the anatomy masks costs accuracy in BOTH cohorts and by nearly the
-      same amount -- on the same checkpoint and the same 27 classes, CT-RATE falls
-      0.7991 to 0.7617 (-0.0375) and pediatrics 0.8005 to 0.7651 (-0.0354), with a
-      per-class correlation of r = +0.908. The penalty is a property of the method,
-      not of children. The two biggest losers, Pneumothorax (-0.378) and Bone
-      lesion (-0.269), route to the two regions we derived rather than segmented.
-      One loose end: ctrate/V1 reads 0.7954 against ctrate/V1_masked's 0.7991 on
+      The routing penalty is real and it is NOT pediatric -- on the same
+      checkpoint and the same 27 classes, CT-RATE falls 0.7991 to 0.7617 (-0.0375)
+      and pediatrics 0.8005 to 0.7651 (-0.0354). But the macro number badly
+      misdescribes what happens, and the per-class breakdown is the finding.
+      TWO classes account for roughly two thirds of the entire penalty:
+      Pneumothorax 0.695 to 0.317 and Bone lesion 0.616 to 0.347. Those are BELOW
+      CHANCE. A model merely looking in the wrong place lands near 0.5; below 0.5
+      is systematic inversion, and it reproduces in every cohort and every
+      checkpoint measured. Both route to the two regions we DERIVED rather than
+      segmented with TotalSegmentator -- the pleural shell and bone. Drop those two
+      and the penalty falls to -0.0146 on CT-RATE and -0.0159 on pediatrics, with
+      7 of the remaining 24 classes IMPROVING under routing (Pulmonary metastases
+      +0.061, Pleural thickening +0.018). Three classes are never routed at all
+      and are identical by construction.
+      A structural contributor to the residual: _routed_probs scores organ_lat
+      against the class prompts, but training aligns organ_lat to REGION SENTENCES
+      (L_org) and the class prompts to the GLOBAL latent (L_cls). That pairing is
+      never trained, so part of the remaining -0.015 is a read-out mismatch rather
+      than a statement about anatomy.
+      Two loose ends. ctrate/V1 reads 0.7954 against ctrate/V1_masked's 0.7991 on
       the same checkpoint, labels and order -- config drift between two evaluation
-      runs, unexplained, and it does not touch the paired -0.0375.
+      runs, unexplained; it does not touch the paired -0.0375. And the combined
+      cells lose more than either cohort alone (-0.0353, and -0.0475 when
+      restricted to masked rows). The obvious explanation -- that partial mask
+      coverage mixes two score scales in one ranking -- was tested and is wrong,
+      since restricting to masked rows makes it worse, not better. Unexplained.
 
   # ---------------------------------------------------------- context ctx
   - id: ctx/ct_only
@@ -444,11 +460,22 @@ findings:
       validation macro AUC. A ladder delta below roughly 0.0092 is inside that band
       and is not a difference. This is measured on the V1 recipe, not the context
       recipe, and is the most honest estimate available rather than an exact one.
-  - title: Anatomy routing costs accuracy in adults as much as in children
+  - title: Two broken regions, not a broken idea
     text: >-
-      Same checkpoint, same 27 classes: CT-RATE 0.7991 to 0.7617 (-0.0375),
-      pediatrics 0.8005 to 0.7651 (-0.0354), per-class correlation r = +0.908. The
-      routing penalty is a property of the method, not of the pediatric cohort.
+      The -0.0375 routing penalty is not spread across the label set. Pneumothorax
+      (0.695 to 0.317) and Bone lesion (0.616 to 0.347) fall BELOW CHANCE and carry
+      about two thirds of it, in every cohort and every checkpoint. Below 0.5 is
+      inversion, not misplaced attention -- looking in the wrong place gives 0.5.
+      Both route to the two regions we derived rather than segmented. Excluding
+      them the penalty is -0.0146 (CT-RATE) and -0.0159 (pediatrics), and 7 of the
+      remaining 24 classes improve under routing. Fix those two regions before
+      concluding anything about anatomy routing as a method.
+  - title: The routed read-out uses a pairing that was never trained
+    text: >-
+      Training aligns organ_lat to region sentences (L_org) and the class prompts
+      to the global latent (L_cls). Evaluation scores organ_lat against the class
+      prompts. Part of the residual routing penalty is therefore a read-out
+      mismatch and not a property of anatomy routing.
   - title: Validation AUC is not a result
     text: >-
       The val AUC columns are what the training loop selected checkpoints on. They
