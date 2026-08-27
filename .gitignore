@@ -4,3 +4,8 @@ __pycache__/
 # Pasted screenshots, not part of the figure source
 pipeline/pipeline_figures/*.png
 .cache/
+
+# 4 GB of CT-RATE training masks, moved in from another machine. Data, not
+# code: it belongs on /temp_work with the other mask trees, and a symlink keeps
+# the path that was used to move it working.
+ct-rate-train-masks
