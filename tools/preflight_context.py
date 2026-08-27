@@ -183,6 +183,7 @@ def main() -> int:
             self.acc2ind_status = {k: v["ind_status"] for k, v in ctx.items()}
             self.acc2band = {k: int(v["AgeBand"]) for k, v in dem.items()}
             self.acc2sex = {k: int(v["SexIdx"]) for k, v in dem.items()}
+            self.acc2age = {k: float(v["AgeYears"] or -1.0) for k, v in dem.items()}
             self.ind_pool = [k for k, v in ctx.items() if v["ind_status"] == "present"]
             self.ind_cohort = {k: ctx[k]["cohort"] for k in self.ind_pool}
             self.ctx_seed, self.epoch = seed, 0
@@ -190,8 +191,19 @@ def main() -> int:
             self.cf_prob = float(env("RAC_CF_PROB", "0.25"))
             self.cf_same_cohort = env("RAC_CF_SAME_COHORT", "1") == "1"
 
+    # The probe reuses RACDatasetV4._context_for, so any field that method reads
+    # must be set here. If the dataset gains one and this does not, the probe
+    # raises -- which is the right failure, but the message should say why.
+    needed = {"acc2ind", "acc2ind_status", "acc2band", "acc2sex", "acc2age",
+              "ind_pool", "ind_cohort", "ctx_seed", "epoch", "ind_dropout",
+              "cf_prob", "cf_same_cohort", "NO_INDICATION"}
+
     seed = int(env("RAC_CTX_SEED", env("RAC_SEED", "0")))
     p1, p2 = Probe(ctx, dem, seed), Probe(ctx, dem, seed)
+    absent = sorted(n for n in needed if not hasattr(p1, n))
+    if absent:
+        fail(f"P8: the probe is missing {absent} -- RACDatasetV4._context_for "
+             "reads fields this stand-in does not set")
     keys = sorted(tr)[:4000] or sorted(ctx)[:4000]
     c1 = [p1._context_for(i, k) for i, k in enumerate(keys)]
     c2 = [p2._context_for(i, k) for i, k in enumerate(keys)]

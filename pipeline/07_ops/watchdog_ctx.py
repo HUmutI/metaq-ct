@@ -140,8 +140,20 @@ def inspect(jid: str, info: dict, prev: dict) -> tuple[list[str], dict]:
     if prev_checked is not None:
         quiet_for = (now - prev_checked) / 60.0
         if size == prev_size:
-            alerts.append(f"[{jid} {info['name']}] STALLED: log has not grown in "
-                          f"{quiet_for:.0f} min (elapsed {info['elapsed']})")
+            # Legitimately quiet phases exist: the evaluator's patient-clustered
+            # bootstrap runs 1,000 resamples without printing, and a validation
+            # pass is silent too. One quiet cycle is not evidence; the alert
+            # fires on the SECOND consecutive one, and the counter is reported so
+            # a long-but-real quiet stretch is visible before it trips.
+            n = prev.get("stall_cycles", 0) + 1
+            st["stall_cycles"] = n
+            if n >= 2:
+                alerts.append(f"[{jid} {info['name']}] STALLED: log has not grown "
+                              f"for {n} cycles (~{quiet_for * n:.0f} min, elapsed "
+                              f"{info['elapsed']})")
+            else:
+                print(f"     quiet: {info['name']} no log growth this cycle "
+                      f"(1st) -- alerting on the next one")
         elif cur is not None and prev_up is not None and cur == prev_up:
             # The log moved but the step counter did not. Validation and
             # checkpointing both do this legitimately, so it is a warning after
@@ -152,6 +164,7 @@ def inspect(jid: str, info: dict, prev: dict) -> tuple[list[str], dict]:
             st["no_update_cycles"] = prev.get("no_update_cycles", 0) + 1
         else:
             st["no_update_cycles"] = 0
+            st["stall_cycles"] = 0
 
     # -- FINITE ------------------------------------------------------------
     for m in LOSS_RE.finditer(text[-40_000:]):
@@ -184,7 +197,8 @@ def inspect(jid: str, info: dict, prev: dict) -> tuple[list[str], dict]:
     return alerts, st
 
 
-def cycle(track: list[str], kill_stalled: int) -> list[str]:
+def cycle(track: list[str], kill_stalled: int,
+          ignore: list[str] | None = None) -> list[str]:
     jobs = squeue()
     try:
         with open(STATE, encoding="utf-8") as fh:
@@ -192,8 +206,10 @@ def cycle(track: list[str], kill_stalled: int) -> list[str]:
     except (OSError, json.JSONDecodeError):
         prev_all = {}
 
+    ignore = ignore or []
     watch = {j: i for j, i in jobs.items()
-             if not track or j in track or any(t in i["name"] for t in track)}
+             if (not track or j in track or any(t in i["name"] for t in track))
+             and not any(g in i["name"] for g in ignore)}
     alerts, new_all = [], {}
     for jid, info in sorted(watch.items()):
         a, st = inspect(jid, info, prev_all.get(jid, {}))
@@ -238,6 +254,8 @@ def main() -> int:
     ap.add_argument("--once", action="store_true")
     ap.add_argument("--track", nargs="*", default=[],
                     help="job ids or name substrings; empty = every job")
+    ap.add_argument("--ignore", nargs="*", default=["pedwatch"],
+                    help="job-name substrings to leave alone (ops jobs)")
     ap.add_argument("--kill-stalled", type=int, default=0,
                     help="1 = scancel a job whose log stopped growing")
     a = ap.parse_args()
@@ -246,7 +264,7 @@ def main() -> int:
         stamp = datetime.now().strftime("%H:%M:%S")
         print(f"\n=== watchdog {stamp} ===", flush=True)
         try:
-            alerts = cycle(a.track, a.kill_stalled)
+            alerts = cycle(a.track, a.kill_stalled, a.ignore)
         except Exception as exc:                              # noqa: BLE001
             # A watchdog that dies is worse than no watchdog, because its
             # silence reads as "everything is fine".
