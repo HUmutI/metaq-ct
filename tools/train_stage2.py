@@ -1046,7 +1046,15 @@ def main():
                         context=cf_bundle, return_parts=True)
                     p_true = prompt_probs(img_lat[sel], pos_embs, neg_embs, temp_now)
                     p_cf = prompt_probs(cf_out.z_final, pos_embs, neg_embs, temp_now)
-                    low = (ctx_out.r[sel] < CF_TAU).to(p_true.dtype)
+                    # With C2 off there is no relevance signal, so there is no
+                    # basis for calling any class irrelevant -- and the honest
+                    # default is the STRONGER constraint: hold every class
+                    # stable under a mismatched indication. Indexing r here
+                    # without the guard is what crashed the three C2-off rungs.
+                    if ctx_out.r is None:
+                        low = torch.ones_like(p_true)
+                    else:
+                        low = (ctx_out.r[sel] < CF_TAU).to(p_true.dtype)
                     loss_cf = ((p_true - p_cf).pow(2) * low).sum(dim=-1).div(
                         low.sum(dim=-1).clamp(min=1.0)).mean()
 
