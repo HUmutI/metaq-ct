@@ -145,6 +145,11 @@ class ContextEncoder(nn.Module):
         nn.init.normal_(self.e_0, std=0.02)
         nn.init.normal_(self.e_age_unknown, std=0.02)
 
+        # The unordered table for the "flat" arm. Always constructed so the
+        # checkpoint shape does not depend on the ablation flag.
+        self.e_flat = nn.Embedding(N_BANDS_TOTAL, age_dim)
+        nn.init.normal_(self.e_flat.weight, std=0.02)
+
         self.e_sex = nn.Embedding(N_SEX, sex_dim)
         nn.init.normal_(self.e_sex.weight, std=0.02)
 
@@ -199,8 +204,23 @@ class ContextEncoder(nn.Module):
         ordered = self.e_0.unsqueeze(0) + torch.cat([zero, steps], dim=0)   # (10, age_dim)
         return torch.cat([ordered, self.e_age_unknown.unsqueeze(0)], dim=0)
 
-    def demographic_tokens(self, age_band: torch.Tensor, sex: torch.Tensor) -> torch.Tensor:
-        """``(B, 3, dim)`` -- age, sex, interaction."""
+    def demographic_tokens(self, age_band: torch.Tensor, sex: torch.Tensor,
+                           age_years: torch.Tensor | None = None,
+                           mode: str = "band") -> torch.Tensor:
+        """``(B, 3, dim)`` -- age, sex, interaction.
+
+        ``mode`` selects the R8 ablation arm and exists so the ordinal-cumulative
+        parameterisation has to earn its place:
+
+          band      the design: ordinal cumulative sum over 10 bands
+          scalar    a single normalised number -- what the bands replaced, and
+                    what forces linear extrapolation across the 18-25 bridge
+                    where CT-RATE contributes 7 volumes under 18 out of 47,137
+          flat      an unordered embedding table: bands, but with the ordering
+                    thrown away, isolating what the cumulative sum buys
+          shuffled  the band index permuted per sample -- the negative control;
+                    if this scores like `band`, age was never being used
+        """
         if age_band.dtype != torch.long:
             age_band = age_band.long()
         if sex.dtype != torch.long:
@@ -213,7 +233,22 @@ class ContextEncoder(nn.Module):
             raise ValueError(f"age_band max={int(age_band.max())} (allowed {BAND_UNKNOWN}), "
                              f"sex max={int(sex.max())} (allowed {N_SEX - 1})")
 
-        t_age = self.P_age(self.age_table()[age_band])                  # (B, dim)
+        if mode == "scalar":
+            if age_years is None:
+                raise ValueError("age_mode=scalar needs age_years")
+            # /100 keeps it in roughly [0, 1]; unknown ages (-1) become 0 and are
+            # indistinguishable from a newborn, which is precisely the failure
+            # the bands were introduced to avoid.
+            a = (age_years.to(self.e_0.dtype).clamp(min=0.0) / 100.0).unsqueeze(-1)
+            e_age = self.e_0.unsqueeze(0) * a
+        elif mode == "flat":
+            e_age = self.e_flat(age_band)
+        elif mode == "shuffled":
+            perm = torch.randperm(N_BANDS_TOTAL, device=age_band.device)
+            e_age = self.age_table()[perm[age_band]]
+        else:
+            e_age = self.age_table()[age_band]
+        t_age = self.P_age(e_age)                                       # (B, dim)
         t_sex = self.P_sex(self.e_sex(sex))                             # (B, dim)
         t_int = self.P_int(self.e_int[age_band, sex])                   # (B, dim)
         return self.norm_dem(torch.stack([t_age, t_sex, t_int], dim=1))
@@ -227,6 +262,8 @@ class ContextEncoder(nn.Module):
         age_band: torch.Tensor,
         sex: torch.Tensor,
         to_latent: nn.Module | None = None,
+        age_years: torch.Tensor | None = None,
+        age_mode: str = "band",
     ) -> ContextBundle:
         """Build ``H_C`` and the pooled indication embedding.
 
@@ -239,7 +276,7 @@ class ContextEncoder(nn.Module):
         benefit -- and would make the cached class embeddings stale on resume.
         """
         H_ind = self.norm_ind(self.encode_text(input_ids, attention_mask))   # (B, L, dim)
-        H_dem = self.demographic_tokens(age_band, sex)                       # (B, 3, dim)
+        H_dem = self.demographic_tokens(age_band, sex, age_years, age_mode)  # (B, 3, dim)
         H_C = torch.cat([H_ind, H_dem], dim=1)
 
         pad_ind = attention_mask.to(torch.bool).logical_not()                # True = ignore

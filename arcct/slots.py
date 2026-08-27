@@ -204,8 +204,10 @@ class CtxConfig:
     beta_init: float = -6.0         # b, with beta = softplus(b) >= 0 structurally
     ind_dropout: float = 0.3
     cf_prob: float = 0.25
-    selfattn: str = "split"         # "split" | "mask"
+    selfattn: str = "split"         # "split" | "mask" | "none" (ablation)
     zind_combine: str = "mean"      # "mean" | "add"
+    fusion: str = "concat"          # "concat" | "gated"
+    age_mode: str = "band"          # "band" | "scalar" | "flat" | "shuffled"
     ptok_weight: float = 0.5
     max_ind_len: int = 64
     role_stats: bool = True
@@ -224,6 +226,8 @@ class CtxConfig:
             cf_prob=float(os.environ.get("RAC_CF_PROB", "0.25")),
             selfattn=os.environ.get("RAC_CTX_SELFATTN", "split").lower(),
             zind_combine=os.environ.get("RAC_CTX_ZIND_COMBINE", "mean").lower(),
+            fusion=os.environ.get("RAC_CTX_FUSION", "concat").lower(),
+            age_mode=os.environ.get("RAC_AGE_MODE", "band").lower(),
             ptok_weight=float(os.environ.get("RAC_CTX_PTOK_WEIGHT", "0.5")),
             max_ind_len=int(os.environ.get("RAC_CTX_MAX_IND_LEN", "64")),
             role_stats=_env_flag("RAC_CTX_ROLE_STATS", "1"),
@@ -235,8 +239,18 @@ class CtxConfig:
 
     def validate(self) -> None:
         problems: list[str] = []
-        if self.selfattn not in ("split", "mask"):
-            problems.append(f"RAC_CTX_SELFATTN={self.selfattn!r}, expected split|mask")
+        # Every one of these rejects an unknown value rather than falling back
+        # to the default. An ablation arm whose flag is silently ignored is not
+        # an ablation arm, it is a duplicate of the baseline wearing its name --
+        # and it would be written up as evidence.
+        if self.selfattn not in ("split", "mask", "none"):
+            problems.append(f"RAC_CTX_SELFATTN={self.selfattn!r}, expected "
+                            "split|mask|none")
+        if self.fusion not in ("concat", "gated"):
+            problems.append(f"RAC_CTX_FUSION={self.fusion!r}, expected concat|gated")
+        if self.age_mode not in ("band", "scalar", "flat", "shuffled"):
+            problems.append(f"RAC_AGE_MODE={self.age_mode!r}, expected "
+                            "band|scalar|flat|shuffled")
         if self.zind_combine not in ("mean", "add"):
             problems.append(f"RAC_CTX_ZIND_COMBINE={self.zind_combine!r}, expected mean|add")
         if not 0.0 < self.film_eps <= 1.0:
@@ -326,8 +340,11 @@ def _selftest() -> int:
     check(cfg.enabled is False, "context must be OFF unless RAC_USE_CONTEXT_QFORMER=1")
     check(cfg.selfattn == "split", "split is the default self-attention path")
     check(cfg.zind_combine == "mean", "mean is the default Z_ind combination")
+    check(cfg.fusion == "concat" and cfg.age_mode == "band",
+          "concat fusion and banded age are the defaults")
     for name, value in (("RAC_CTX_SELFATTN", "bogus"), ("RAC_CTX_FILM_EPS", "0"),
-                        ("RAC_CTX_ZIND_COMBINE", "concat"), ("RAC_IND_DROPOUT", "1.0")):
+                        ("RAC_CTX_ZIND_COMBINE", "concat"), ("RAC_IND_DROPOUT", "1.0"),
+                        ("RAC_CTX_FUSION", "sum"), ("RAC_AGE_MODE", "years")):
         old = os.environ.get(name)
         os.environ[name] = value
         try:

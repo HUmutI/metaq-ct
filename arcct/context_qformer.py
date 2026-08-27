@@ -128,6 +128,16 @@ class ContextQFormer(AnatomyQFormer):
         with torch.no_grad():
             self.fusion.weight.zero_()
             self.fusion.weight[:, :dim].copy_(torch.eye(dim))
+        # The gated-sum alternative the advisor's note proposed first:
+        #   Z_final = LN(Z_gen + g * Z_ind),  g = sigmoid(MLP(mean H_C))
+        # The scalar g0 starts at zero so the gate is CLOSED at step 0 and the
+        # identity holds for this arm too -- otherwise the two fusion arms would
+        # not start from the same model and could not be compared.
+        self.gate_mlp = nn.Linear(dim, dim)
+        self.gate_scale = nn.Parameter(torch.zeros(()))
+        self.gate_norm = nn.LayerNorm(dim)
+        nn.init.zeros_(self.gate_mlp.weight)
+        nn.init.zeros_(self.gate_mlp.bias)
 
         self.last_role_stats: dict[str, torch.Tensor] | None = None
 
@@ -204,6 +214,7 @@ class ContextQFormer(AnatomyQFormer):
         attention_mask: torch.Tensor | None = None,
         age_band: torch.Tensor | None = None,
         sex: torch.Tensor | None = None,
+        age_years: torch.Tensor | None = None,
         return_parts: bool = False,
     ):
         if return_attn:
@@ -219,7 +230,8 @@ class ContextQFormer(AnatomyQFormer):
                 age_band = torch.full((B,), -1, dtype=torch.long, device=feat_map.device)
             if sex is None:
                 sex = torch.full((B,), -1, dtype=torch.long, device=feat_map.device)
-            context = self.context(input_ids, attention_mask, age_band, sex)
+            context = self.context(input_ids, attention_mask, age_band, sex,
+                                   age_years=age_years, age_mode=self.cfg.age_mode)
 
         base, stats = self._base_role_mask(feat_map, ts_mask, has_mask)
         self.last_role_stats = stats
@@ -248,8 +260,16 @@ class ContextQFormer(AnatomyQFormer):
         # over n_gen keys, its conditioned twin over all n_slots. So a tied pair
         # shares a query vector but not an output token, by design -- the tying
         # is a statement about the input, not the answer.
-        split = L.n_gen if self.cfg.selfattn == "split" else None
-        gmask = self.group_self_attn_mask if split is None else None
+        # "none" is the isolation ablation: the group constraint is REMOVED, so
+        # the unconditioned rows can read the conditioned ones and Z_gen stops
+        # being invariant. It exists to measure the leak rather than to argue
+        # about it; a run in this mode must never be reported as a safe model.
+        if self.cfg.selfattn == "none":
+            split, gmask = None, None
+        elif self.cfg.selfattn == "split":
+            split, gmask = L.n_gen, None
+        else:
+            split, gmask = None, self.group_self_attn_mask
         z_gen, tokens = self.qformer(
             feat_map, cross_attn_mask=attn_mask, queries=q,
             self_attn_split=split, self_attn_mask=gmask,
@@ -269,7 +289,11 @@ class ContextQFormer(AnatomyQFormer):
         # two halves of the fusion input are comparably scaled.
         z_ind = 0.5 * (z_pool + z_clin) if self.cfg.zind_combine == "mean" else (z_pool + z_clin)
 
-        z_final = self.fusion(torch.cat([z_gen, z_ind], dim=-1))
+        if self.cfg.fusion == "gated":
+            g = self.gate_scale * torch.sigmoid(self.gate_mlp(context.e_ind.to(z_ind.dtype)))
+            z_final = self.gate_norm(z_gen + g * z_ind)
+        else:
+            z_final = self.fusion(torch.cat([z_gen, z_ind], dim=-1))
 
         if self.cfg.debug and not torch.isfinite(z_ind).all():
             raise RuntimeError("Z_ind is not finite -- a NaN here passes straight "

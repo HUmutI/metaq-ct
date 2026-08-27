@@ -263,7 +263,7 @@ class RACDatasetV4(Dataset):
         from arcct.context import NO_INDICATION, age_to_band     # noqa: PLC0415
         self.NO_INDICATION = NO_INDICATION
         self.acc2ind, self.acc2ind_status = {}, {}
-        self.acc2band, self.acc2sex = {}, {}
+        self.acc2band, self.acc2sex, self.acc2age = {}, {}, {}
         self.ind_pool = []
         self.ind_cohort = {}
         context_csv = context_csv or os.environ.get("RAC_CONTEXT_CSV", "")
@@ -295,6 +295,13 @@ class RACDatasetV4(Dataset):
                     self.acc2sex[acc] = int(row["SexIdx"])
                 except (KeyError, TypeError, ValueError):
                     self.acc2sex[acc] = 2
+                # Carried for the R8 "scalar age" ablation only; the banded arm
+                # never reads it. -1 means unknown, and the scalar arm clamps it
+                # to 0, which is exactly the confusion the bands avoid.
+                try:
+                    self.acc2age[acc] = float(row["AgeYears"])
+                except (KeyError, TypeError, ValueError):
+                    self.acc2age[acc] = -1.0
             print(f"[ctx] demographics: {len(self.acc2band)} rows ({demographics_csv})",
                   flush=True)
 
@@ -607,6 +614,7 @@ class RACDatasetV4(Dataset):
             "indication_cf": cf,
             "age_band": int(self.acc2band.get(accession, -1)),
             "sex": int(self.acc2sex.get(accession, -1)),
+            "age_years": float(self.acc2age.get(accession, -1.0)),
             "ind_dropped": bool(dropped),
             "ind_status": status,
         }
@@ -659,6 +667,7 @@ def rac_collate(batch):
         "indication_cf": [c["indication_cf"] for c in ctxs],
         "age_band": torch.tensor([c["age_band"] for c in ctxs], dtype=torch.long),
         "sex": torch.tensor([c["sex"] for c in ctxs], dtype=torch.long),
+        "age_years": torch.tensor([c["age_years"] for c in ctxs], dtype=torch.float32),
         "ind_dropped": torch.tensor([c["ind_dropped"] for c in ctxs], dtype=torch.bool),
         "ind_status": [c["ind_status"] for c in ctxs],
     }

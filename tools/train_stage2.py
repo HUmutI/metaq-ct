@@ -436,7 +436,9 @@ def run_validation(clip, tokenizer, device, val_loader, qformer_module=None,
                     tokenizer, ctx["indication"], ctx_cfg.max_ind_len, device)
                 bundle = qformer_module.context(
                     tok["input_ids"], tok["attention_mask"],
-                    ctx["age_band"].to(device), ctx["sex"].to(device))
+                    ctx["age_band"].to(device), ctx["sex"].to(device),
+                    age_years=ctx["age_years"].to(device),
+                    age_mode=ctx_cfg.age_mode)
                 out = qformer_module(feat_map, masks_fine, has_masks_d,
                                      context=bundle, return_parts=True)
                 img_lat = out.z_final
@@ -455,7 +457,9 @@ def run_validation(clip, tokenizer, device, val_loader, qformer_module=None,
                         ctx_cfg.max_ind_len, device)
                     b2 = qformer_module.context(
                         blank["input_ids"], blank["attention_mask"],
-                        ctx["age_band"].to(device), ctx["sex"].to(device))
+                        ctx["age_band"].to(device), ctx["sex"].to(device),
+                        age_years=ctx["age_years"].to(device),
+                        age_mode=ctx_cfg.age_mode)
                     o2 = qformer_module(feat_map, masks_fine, has_masks_d,
                                         context=b2, return_parts=True)
                     if not torch.equal(out.z_gen, o2.z_gen):
@@ -877,7 +881,9 @@ def main():
                     tokenizer, ctx["indication"], CTX_CFG.max_ind_len, device)
                 ctx_bundle = qformer_module.context(
                     ctx_tok["input_ids"], ctx_tok["attention_mask"],
-                    ctx["age_band"].to(device), ctx["sex"].to(device))
+                    ctx["age_band"].to(device), ctx["sex"].to(device),
+                    age_years=ctx["age_years"].to(device),
+                    age_mode=CTX_CFG.age_mode)
                 ctx_out = qformer_module(
                     feat_map, masks_fine, has_masks, context=ctx_bundle,
                     return_parts=True)
@@ -1029,7 +1035,9 @@ def main():
                         tokenizer, cf_txt, CTX_CFG.max_ind_len, device)
                     cf_bundle = qformer_module.context(
                         cf_tok["input_ids"], cf_tok["attention_mask"],
-                        ctx["age_band"].to(device)[sel], ctx["sex"].to(device)[sel])
+                        ctx["age_band"].to(device)[sel], ctx["sex"].to(device)[sel],
+                        age_years=ctx["age_years"].to(device)[sel],
+                        age_mode=CTX_CFG.age_mode)
                     # feat_map is REUSED: the image did not change, only H_C did.
                     # Re-running forward_spatial would double the step cost for
                     # an identical tensor.
