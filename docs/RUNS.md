@@ -45,6 +45,27 @@ including `ct_only`, so the sweep is internally comparable.
 
 Its job is to pick the configuration, not to be the model anyone is shown.
 
+*Provenance note.* Partway through this sweep `indication.csv` was regenerated
+after `classify()` was corrected (see below). On the pediatric side the change
+touched 30 of 8,817 rows -- 0.34%, all of them going from vacuous to a one- or
+two-word indication -- so cells that started before and after the regeneration
+differ by far less than the 0.0046 seed band. Recorded rather than restarted:
+re-running 24 cells for a 0.34% data change would cost fourteen hours to chase
+an effect two orders of magnitude below the noise.
+
+### `joint_*` will see twice the adult indication that `ctx`/`ctx2` did
+`classify()` originally required three words before calling an indication
+usable. That is right for the pediatric corpus, whose indication is a history
+with a median of 24 words, and wrong for CT-RATE, whose indication is a
+*question*: "pneumonia?" 1,860 times, "covid?" 975, "Cough" 473, "chest pain"
+319. The rule marked 12,371 such rows vacuous and the dataset replaced them with
+NO_INDICATION, so the adult half was training with its most on-point indications
+deliberately blanked.
+
+Corrected to judge content rather than length: usable adult indications went
+from 24.1% to 48.7%. This barely moves the pediatric-only ladders; it roughly
+doubles the conditioning signal available to any joint run.
+
 ### `ctx3` — reserved: CT-RATE masks
 Not started. When the 47k CT-RATE TotalSegmentator masks land, this is the sweep
 that turns anatomy routing on for the adult half too. It is a separate

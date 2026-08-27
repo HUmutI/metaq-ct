@@ -319,17 +319,32 @@ def _flatten(t: str) -> str:
     return re.sub(r"\s+", " ", t).strip()
 
 
-VACUOUS = re.compile(r"^\s*(not\s+given|none|n/?a|nil|unknown|-{1,3}|\.)\s*\.?\s*$", re.I)
+VACUOUS = re.compile(
+    r"^\s*(not\s+given|not\s+specified|unspecified|none|no|n/?a|nil|unknown"
+    r"|-{1,3}|\.+|\?+|\u2026+)\s*\.?\s*$", re.I)
 
 
-def classify(text: str, min_words: int = 3) -> str:
-    """present | vacuous | absent -- one definition, used by every consumer."""
+def classify(text: str, min_alpha: int = 2) -> str:
+    """present | vacuous | absent -- one definition, used by every consumer.
+
+    Judged on CONTENT, not word count. An earlier version required three words
+    and it was wrong for CT-RATE, where the indication is a question rather than
+    a history: "pneumonia?" appears 1,860 times, "covid?" 975, "Cough" 473,
+    "chest pain" 319. Those are exactly the clinical question this architecture
+    conditions on, and the three-word rule marked 12,118 of them vacuous --
+    dropping usable adult indications from 49.8% to 24.1% and blanking the most
+    on-point ones.
+
+    What is genuinely empty is a fixed set of placeholder strings plus anything
+    carrying fewer than two alphabetic characters. "TB" and "Ca?" survive; "?",
+    "I" and an ellipsis do not.
+    """
     t = (text or "").strip()
     if not t:
         return "absent"
     if VACUOUS.match(t):
         return "vacuous"
-    return "present" if len(t.split()) >= min_words else "vacuous"
+    return "present" if len(re.findall(r"[A-Za-z]", t)) >= min_alpha else "vacuous"
 
 
 def _age_replacement(n: float, unit: str) -> str:

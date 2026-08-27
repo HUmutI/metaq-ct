@@ -317,9 +317,15 @@ def assertions(rows: list[dict], peds_raw: list[dict], pool: NamePool,
             bad.append(f"A10 present rate {rate:.3f} is more than "
                        f"{PRESENT_TOLERANCE} from the measured "
                        f"{EXPECTED_PRESENT_RATE:.3f}; the parse has changed")
-        short = [r for r in peds_rows if r["ind_status"] == "present" and r["ind_words"] < 3]
-        if short:
-            bad.append(f"A10b {len(short)} 'present' rows carry fewer than 3 words")
+        # Mirrors classify()'s rule, which is about CONTENT rather than length.
+        # This check used to require three words and would now reject the very
+        # rows the fix exists to keep: "pneumonia?" is one word and is a real
+        # indication. A 'present' row must carry two alphabetic characters.
+        thin = [r for r in rows if r["ind_status"] == "present"
+                and len(re.findall(r"[A-Za-z]", r["Indication_EN"])) < 2]
+        if thin:
+            bad.append(f"A10b {len(thin)} 'present' rows carry fewer than two "
+                       f"letters, e.g. {[r['Indication_EN'] for r in thin[:5]]}")
         if sum(hits.values()) == 0:
             bad.append("A12 the scrubber matched nothing at all -- that is a wiring "
                        "failure, not a clean corpus")

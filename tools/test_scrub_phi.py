@@ -169,9 +169,16 @@ def main() -> int:
     check(sum(res.hits.values()) > 0, "a run that matched nothing is a wiring failure")
 
     # ---- classify -------------------------------------------------------
+    # Judged on content, not length. CT-RATE's indication is a QUESTION, not a
+    # history: "pneumonia?" occurs 1,860 times and "chest pain" 319, and a
+    # word-count rule threw 12,118 such rows away as vacuous.
     for text, want in [("", "absent"), ("   ", "absent"), ("Not given.", "vacuous"),
                        ("None", "vacuous"), ("N/A", "vacuous"), ("-", "vacuous"),
-                       ("chest pain", "vacuous"),           # 2 words
+                       ("Unspecified.", "vacuous"), ("not specified", "vacuous"),
+                       ("?", "vacuous"), ("I", "vacuous"), ("no", "vacuous"),
+                       ("chest pain", "present"), ("pneumonia?", "present"),
+                       ("covid?", "present"), ("Cough", "present"),
+                       ("TB", "present"), ("Ca?", "present"),
                        ("evaluate for pneumonia", "present"),
                        ("History of metastatic osteosarcoma, evaluate nodules", "present")]:
         got = classify(text)
