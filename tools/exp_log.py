@@ -67,7 +67,7 @@ def _run_state(run_dir: str, min_update: int = 0) -> dict:
     died, not converged.
     """
     out = {"exists": os.path.isdir(run_dir), "auc": None, "at": None,
-           "last_update": 0, "state": "missing"}
+           "last_update": 0, "state": "missing", "started": None, "updated": None}
     if not out["exists"]:
         return out
     ns, best, at = [], None, None
@@ -91,10 +91,14 @@ def _run_state(run_dir: str, min_update: int = 0) -> dict:
     out["auc"], out["at"] = best, at
     out["last_update"] = max(ns) if ns else 0
     try:
-        newest = max(os.path.getmtime(os.path.join(run_dir, f))
-                     for f in os.listdir(run_dir))
+        mt = [os.path.getmtime(os.path.join(run_dir, f)) for f in os.listdir(run_dir)]
+        newest, oldest = max(mt), min(mt)
     except (OSError, ValueError):
         return out
+    # Dates come off the filesystem, like every other fact here. A hand-typed
+    # start date is the first thing to go stale after a requeue.
+    out["started"] = datetime.fromtimestamp(oldest).strftime("%Y-%m-%d")
+    out["updated"] = datetime.fromtimestamp(newest).strftime("%Y-%m-%d")
     has_best = os.path.isfile(os.path.join(run_dir, "CTClip.best.pt"))
     quiet = (time.time() - newest) > QUIET
     if not quiet:
@@ -164,6 +168,13 @@ def harvest(reg: dict) -> dict:
             exp["_sd"] = (sum((v - m) ** 2 for v in seeds) / (len(seeds) - 1)) ** 0.5
         else:
             exp["_sd"] = None
+        st = [r["started"] for r in exp["_runs"] if r["started"]]
+        up = [r["updated"] for r in exp["_runs"] if r["updated"]]
+        exp["_started"], exp["_updated"] = (min(st) if st else None), (max(up) if up else None)
+        if exp["_started"] and exp["_updated"] and exp["_started"] != exp["_updated"]:
+            exp["_dates"] = f"{exp['_started']} \u2192 {exp['_updated']}"
+        else:
+            exp["_dates"] = exp["_started"] or "--"
         states = {r["state"] for r in exp["_runs"]}
         if exp.get("status") in ("queued", "planned"):
             exp["_state"] = exp["status"]
@@ -240,10 +251,11 @@ def render_md(reg: dict) -> str:
         if group.get("note"):
             A(group["note"])
             A("")
-        A("| experiment | arch | cohort · classes | masks | seeds | val AUC | state |")
-        A("|---|---|---|---|---|---|---|")
+        A("| experiment | dates | arch | cohort · classes | masks | seeds | val AUC | state |")
+        A("|---|---|---|---|---|---|---|---|")
         for e in exps:
-            A(f"| **{e['id']}** | {e.get('arch','?')} | {e.get('cohort','?')} · "
+            A(f"| **{e['id']}** | {e['_dates']} | {e.get('arch','?')} | "
+              f"{e.get('cohort','?')} · "
               f"{e.get('classes','?')} | {e.get('masks','--')} | "
               f"{e['_nseed']}/{len(e.get('runs',[]))} | "
               f"{_auc(e['_mean'], e['_sd'], e['_nseed'])} | "
@@ -272,6 +284,15 @@ def render_md(reg: dict) -> str:
             if e.get("finding"):
                 A(f"**{e['id']} -- what it settled.** {e['finding']}")
                 A("")
+
+    if reg.get("journal"):
+        A("## Journal")
+        A("")
+        A("Dated record of what happened and what it changed. Newest first.")
+        A("")
+        for j in sorted(reg["journal"], key=lambda x: str(x["date"]), reverse=True):
+            A(f"**{j['date']} — {j['title']}**  {j['text']}")
+            A("")
 
     if reg.get("findings"):
         A("## Standing conclusions")
@@ -306,13 +327,15 @@ def render_html(reg: dict) -> str:
         if group.get("note"):
             rows.append(f'<p class="note">{e_(group["note"])}</p>')
         rows.append('<div class="scroll"><table><thead><tr>'
-                    '<th>experiment</th><th>arch</th><th>cohort · classes</th>'
+                    '<th>experiment</th><th>dates</th><th>arch</th>'
+                    '<th>cohort · classes</th>'
                     '<th>masks</th><th>seeds</th><th class="num">val AUC</th>'
                     '<th>state</th></tr></thead><tbody>')
         for e in exps:
             st = e["_state"]
             rows.append(
                 f'<tr><td><strong>{e_(e["id"])}</strong></td>'
+                f'<td class="dates">{e_(e["_dates"])}</td>'
                 f'<td><span class="arch a-{e_(str(e.get("arch","?")))}">'
                 f'{e_(str(e.get("arch","?")))}</span></td>'
                 f'<td>{e_(str(e.get("cohort","?")))} · {e_(str(e.get("classes","?")))}</td>'
@@ -352,6 +375,10 @@ def render_html(reg: dict) -> str:
                             f'{e_(e["finding"])}</p>')
         rows.append('</section>')
 
+    journal = "".join(
+        f'<li><span class="jdate">{e_(str(j["date"]))}</span>'
+        f'<div><strong>{e_(j["title"])}</strong> {e_(j["text"])}</div></li>'
+        for j in sorted(reg.get("journal", []), key=lambda x: str(x["date"]), reverse=True))
     findings = "".join(
         f'<div class="card"><h3>{e_(f["title"])}</h3><p>{e_(f["text"])}</p></div>'
         for f in reg.get("findings", []))
@@ -430,6 +457,16 @@ code {{ font:400 13px/1.4 "IBM Plex Mono",monospace; color:var(--ink2); }}
 .card h3 {{ margin:0 0 6px; color:var(--accent); }}
 .card p {{ margin:0; color:var(--ink2); font-size:14px; }}
 .orph {{ color:var(--ink2); }}
+.dates {{ font:400 12px/1.5 "IBM Plex Mono",monospace; color:var(--muted);
+  white-space:nowrap; }}
+.journal {{ list-style:none; padding:0; margin:18px 0 8px; }}
+.journal li {{ display:flex; gap:18px; padding:14px 0;
+  border-bottom:1px solid var(--rule); }}
+.journal li:last-child {{ border-bottom:none; }}
+.jdate {{ flex:0 0 92px; font:600 12px/1.7 "IBM Plex Mono",monospace;
+  color:var(--accent); }}
+.journal div {{ color:var(--ink2); font-size:14px; }}
+.journal strong {{ color:var(--ink); }}
 </style>
 <div class="wrap">
 <h1>ARC-CT Experiment Ledger</h1>
@@ -445,6 +482,9 @@ the other unless the ledger says the split, the labels and the class set matched
 loop selected on, averaged over completed seeds &mdash; a model-selection number,
 not a result. The <strong>held-out</strong> tables are the reportable ones.</p>
 {"".join(rows)}
+<h2>Journal</h2>
+<p class="note">Dated record of what happened and what it changed. Newest first.</p>
+<ol class="journal">{journal}</ol>
 <h2>Standing conclusions</h2>
 <div class="cards">{findings}</div>
 {orph}

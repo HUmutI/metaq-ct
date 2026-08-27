@@ -4,7 +4,7 @@ Every run of this project: finished, in flight, and queued. **Generated** by
 `tools/exp_log.py` -- do not edit the tables by hand, edit `docs/experiments.yaml`
 and re-render. Every AUC below is read off disk at render time.
 
-Rendered 2026-08-27 19:02 UTC.
+Rendered 2026-08-27 19:18 UTC.
 
 Two architectures appear here and they must never be compared casually:
 
@@ -19,13 +19,13 @@ columns come from `eval_matrix` and are the reportable ones.
 
 Recipe search on the 8,816-volume BCH cohort, warm-started from the published adult checkpoint and re-headed to the 27-class pediatric schema. V1 is the recipe everything since is measured against; V5 is the best of the search. The three V1 seeds are also where the seed band comes from.
 
-| experiment | arch | cohort · classes | masks | seeds | val AUC | state |
-|---|---|---|---|---|---|---|
-| **V1** | ARC-CT | peds 7,001 · 27 | peds 100% | 3/3 | 0.7922 ±0.0046 | done |
-| **V2** | ARC-CT | peds 7,001 · 27 | peds 100% | 1/1 | 0.7974 | done |
-| **V3** | ARC-CT | peds 7,001 · 27 | peds 100% | 1/1 | 0.7971 | done |
-| **V4** | ARC-CT | peds 7,001 · 27 | peds 100% | 1/1 | 0.7972 | done |
-| **V5** | ARC-CT | peds 7,001 · 27 | peds 100% | 1/1 | 0.8019 | done |
+| experiment | dates | arch | cohort · classes | masks | seeds | val AUC | state |
+|---|---|---|---|---|---|---|---|
+| **V1** | 2026-08-22 → 2026-08-27 | ARC-CT | peds 7,001 · 27 | peds 100% | 3/3 | 0.7922 ±0.0046 | done |
+| **V2** | 2026-08-23 | ARC-CT | peds 7,001 · 27 | peds 100% | 1/1 | 0.7974 | done |
+| **V3** | 2026-08-23 | ARC-CT | peds 7,001 · 27 | peds 100% | 1/1 | 0.7971 | done |
+| **V4** | 2026-08-23 | ARC-CT | peds 7,001 · 27 | peds 100% | 1/1 | 0.7972 | done |
+| **V5** | 2026-08-23 | ARC-CT | peds 7,001 · 27 | peds 100% | 1/1 | 0.8019 | done |
 
 Held-out evaluation:
 
@@ -57,11 +57,11 @@ Held-out evaluation:
 
 The same architecture trained on both cohorts together, testing whether adult volume helps the pediatric half and what the label harmonisation costs. "mix" = each cohort keeps its own labeller; "harm" = one labeller for both.
 
-| experiment | arch | cohort · classes | masks | seeds | val AUC | state |
-|---|---|---|---|---|---|---|
-| **C16** | ARC-CT | peds + CT-RATE 16k · 27 | peds only | 1/1 | 0.8175 | done |
-| **C47mix** | ARC-CT | peds + CT-RATE 47k · 27 | peds only | 1/1 | 0.8248 | done |
-| **C47harm** | ARC-CT | peds + CT-RATE 47k · 27 | peds only | 1/1 | 0.8170 | done |
+| experiment | dates | arch | cohort · classes | masks | seeds | val AUC | state |
+|---|---|---|---|---|---|---|---|
+| **C16** | 2026-08-22 → 2026-08-23 | ARC-CT | peds + CT-RATE 16k · 27 | peds only | 1/1 | 0.8175 | done |
+| **C47mix** | 2026-08-23 → 2026-08-24 | ARC-CT | peds + CT-RATE 47k · 27 | peds only | 1/1 | 0.8248 | done |
+| **C47harm** | 2026-08-24 → 2026-08-25 | ARC-CT | peds + CT-RATE 47k · 27 | peds only | 1/1 | 0.8170 | done |
 
 Held-out evaluation:
 
@@ -89,9 +89,9 @@ Held-out evaluation:
 
 Not training runs -- the same checkpoints evaluated twice, once pooling globally and once through the anatomy masks. The question is whether the routing penalty in the pediatric cohort is a property of children or of the method. A cell whose routed column reads "no mask" had no mask supplied and fell back to global; it is not a routed measurement.
 
-| experiment | arch | cohort · classes | masks | seeds | val AUC | state |
-|---|---|---|---|---|---|---|
-| **P0_routing** | ARC-CT | eval only · 27 | eval-time | 0/0 | -- | planned |
+| experiment | dates | arch | cohort · classes | masks | seeds | val AUC | state |
+|---|---|---|---|---|---|---|---|
+| **P0_routing** | -- | ARC-CT | eval only · 27 | eval-time | 0/0 | -- | planned |
 
 Held-out evaluation:
 
@@ -112,16 +112,16 @@ Held-out evaluation:
 
 Eight rungs x three seeds on pediatrics alone, adding one mechanism at a time. This pass is superseded: beta was initialised at -6, where d(beta)/db = sigma(-6) = 0.0025, so the relevance gate could not open within the run -- measured +0.00012 against a predicted +0.000100. The C2 rung here is therefore not a test of C2. Kept because the C1 rungs are unaffected.
 
-| experiment | arch | cohort · classes | masks | seeds | val AUC | state |
-|---|---|---|---|---|---|---|
-| **ctx/ct_only** | context | peds 7,001 · 27 | peds 100% | 2/3 | 0.7906 ±0.0003 | partial |
-| **ctx/concat** | context | peds 7,001 · 27 | peds 100% | 3/3 | 0.7928 ±0.0016 | done |
-| **ctx/c1_xattn** | context | peds 7,001 · 27 | peds 100% | 2/3 | 0.7989 ±0.0007 | partial |
-| **ctx/c1_full** | context | peds 7,001 · 27 | peds 100% | 3/3 | 0.7980 ±0.0017 | done |
-| **ctx/c2** | context | peds 7,001 · 27 | peds 100% | 3/3 | 0.7979 ±0.0017 | done |
-| **ctx/fusion_gated** | context | peds 7,001 · 27 | peds 100% | 1/3 | 0.7949 | partial |
-| **ctx/isolation_off** | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | STALLED |
-| **ctx/age_scalar** | context | peds 7,001 · 27 | peds 100% | 0/1 | -- | STALLED |
+| experiment | dates | arch | cohort · classes | masks | seeds | val AUC | state |
+|---|---|---|---|---|---|---|---|
+| **ctx/ct_only** | 2026-08-26 → 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 2/3 | 0.7906 ±0.0003 | partial |
+| **ctx/concat** | 2026-08-26 → 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 3/3 | 0.7928 ±0.0016 | done |
+| **ctx/c1_xattn** | 2026-08-26 → 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 2/3 | 0.7989 ±0.0007 | partial |
+| **ctx/c1_full** | 2026-08-26 → 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 3/3 | 0.7980 ±0.0017 | done |
+| **ctx/c2** | 2026-08-26 → 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 3/3 | 0.7979 ±0.0017 | done |
+| **ctx/fusion_gated** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 1/3 | 0.7949 | partial |
+| **ctx/isolation_off** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | STALLED |
+| **ctx/age_scalar** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 0/1 | -- | STALLED |
 
 `ctx/ct_only`: 1 seed(s) died before update 2,000 and are excluded from the mean (`ctx_ct_only_seed1`).
 
@@ -139,16 +139,16 @@ Eight rungs x three seeds on pediatrics alone, adding one mechanism at a time. T
 
 The rerun with beta_init -2, a 20x learning-rate multiplier on the zero-init context modules, and patience 8. This is the pass that picks the winner for the joint runs.
 
-| experiment | arch | cohort · classes | masks | seeds | val AUC | state |
-|---|---|---|---|---|---|---|
-| **ctx2/ct_only** | context | peds 7,001 · 27 | peds 100% | 2/3 | 0.7909 ±0.0018 | partial |
-| **ctx2/concat** | context | peds 7,001 · 27 | peds 100% | 3/3 | 0.7854 ±0.0025 | done |
-| **ctx2/c1_xattn** | context | peds 7,001 · 27 | peds 100% | 1/3 | 0.7962 | partial |
-| **ctx2/c1_full** | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | RUNNING |
-| **ctx2/c2** | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | queued |
-| **ctx2/fusion_gated** | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | queued |
-| **ctx2/isolation_off** | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | queued |
-| **ctx2/age_scalar** | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | queued |
+| experiment | dates | arch | cohort · classes | masks | seeds | val AUC | state |
+|---|---|---|---|---|---|---|---|
+| **ctx2/ct_only** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 2/3 | 0.7909 ±0.0018 | partial |
+| **ctx2/concat** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 3/3 | 0.7854 ±0.0025 | done |
+| **ctx2/c1_xattn** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 1/3 | 0.7962 | partial |
+| **ctx2/c1_full** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | RUNNING |
+| **ctx2/c2** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | queued |
+| **ctx2/fusion_gated** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | queued |
+| **ctx2/isolation_off** | -- | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | queued |
+| **ctx2/age_scalar** | -- | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | queued |
 
 `ctx2/ct_only`: 1 seed(s) died before update 3,200 and are excluded from the mean (`ctx2_ct_only_seed0`).
 
@@ -156,16 +156,16 @@ The rerun with beta_init -2, a 20x learning-rate multiplier on the zero-init con
 
 `ctx2/c1_xattn`: 2 seed(s) died before update 3,200 and are excluded from the mean (`ctx2_c1_xattn_seed1`, `ctx2_c1_xattn_seed2`).
 
-`ctx2/c1_full`: 1 seed(s) died before update 3,200 and are excluded from the mean (`ctx2_c1_full_seed2`).
+`ctx2/c1_full`: 2 seed(s) died before update 3,200 and are excluded from the mean (`ctx2_c1_full_seed1`, `ctx2_c1_full_seed2`).
 
 ## Joint context runs (the headline)
 
 The winning rung retrained on the combined 49,545-volume split, alongside ct_only on the SAME split. The joint baseline is not redundant: CT-RATE outnumbers pediatrics six to one there, and a configuration that wins on 7,001 pediatric volumes is not thereby a winner in that regime.
 
-| experiment | arch | cohort · classes | masks | seeds | val AUC | state |
-|---|---|---|---|---|---|---|
-| **joint/ct_only** | context | peds + CT-RATE 49,545 · 27 | peds only (71.6% once ctx3 masks land) | 0/3 | -- | queued |
-| **joint/winner** | context | peds + CT-RATE 49,545 · 27 | peds only | 0/0 | -- | planned |
+| experiment | dates | arch | cohort · classes | masks | seeds | val AUC | state |
+|---|---|---|---|---|---|---|---|
+| **joint/ct_only** | -- | context | peds + CT-RATE 49,545 · 27 | peds only (71.6% once ctx3 masks land) | 0/3 | -- | queued |
+| **joint/winner** | -- | context | peds + CT-RATE 49,545 · 27 | peds only | 0/0 | -- | planned |
 
 **joint/winner -- what it settled.** Waits on the ctx2 ladder to name a winner. Submitted as `sbatch --export=ALL,JOINT_RUNG=<winner> --array=0-5%3 pipeline/05_train/34_train_joint_ctx.sbatch`, which runs it and the joint baseline in one array.
 
@@ -173,11 +173,31 @@ The winning rung retrained on the combined 49,545-volume split, alongside ct_onl
 
 The winner rerun with anatomy masks on the adult half too. Held separate from the ctx2 ladder on purpose: switching masks on at the same time as C1/C2 would make the gain unattributable.
 
-| experiment | arch | cohort · classes | masks | seeds | val AUC | state |
-|---|---|---|---|---|---|---|
-| **ctx3/masked** | context | peds + CT-RATE 49,545 · 27 | 100% (in production) | 0/0 | -- | planned |
+| experiment | dates | arch | cohort · classes | masks | seeds | val AUC | state |
+|---|---|---|---|---|---|---|---|
+| **ctx3/masked** | -- | context | peds + CT-RATE 49,545 · 27 | 100% (in production) | 0/0 | -- | planned |
 
 **ctx3/masked -- what it settled.** Blocked on mask generation, which is running. 31,570 CT-RATE training masks arrived from another machine already in target format, taking coverage from 14.1% (pediatrics alone) to 71.6%; the remaining 15,575 are being segmented here so the training set has one provenance. Worth finishing rather than training at 71.6% because the gap is not a random third -- sliced by patient id it runs 1.6 / 58 / 66 / 8 / 2 / 76 / 74 / 43 / 4 / 2 percent missing, the signature of a shard array that stopped part way, which would leave L_org fitted to a subsample selected by acquisition order.
+
+## Journal
+
+Dated record of what happened and what it changed. Newest first.
+
+**2026-08-27 — Half of CT-RATE has an indication, not a quarter**  The user challenged the 24% figure and was right. classify() required three words, which fits the pediatric requisitions (median 24 words) and discards the adult ones, which are often a single question. Coverage is 48.7%. An assertion encoding the same three-word rule had to be corrected too, since it blocked the fix.
+
+**2026-08-27 — 31,570 CT-RATE training masks arrived, already in target format**  Moved from another machine at 192x192x96 with labels 0-10, so nothing needed converting. Coverage went from 14.1% (pediatrics alone) to 71.6% of the training split. An alignment check against two known-good controls put them between our own CT-RATE validation masks (98% pass) and our pediatric masks (75%), at 82% -- not broken.
+
+**2026-08-27 — Generating the remaining 15,575 rather than training at 71.6%**  The gap is not a random third: sliced by patient id it runs 1.6 / 58 / 66 / 8 / 2 / 76 / 74 / 43 / 4 / 2 percent missing, the signature of a shard array that stopped part way. All 15,575 already have their npz on disk, so nothing is downloaded. Also found that ts_ctrate.py could not be imported from this repo at all -- two lines above the __future__ import, a SyntaxError, invisible because ast.parse accepts it and because the valid masks were built from a second copy of the tree.
+
+**2026-08-27 — A quiet run directory is not a finished run**  Building the ledger showed that runs killed at update 400 leave exactly what finished runs leave, and their early AUCs were being averaged in. Excluding them, ctx1 reads ct_only 0.7906 (not 0.7883), c1_full +0.0074 (not +0.0097), c2 +0.0073 (not +0.0106) -- so NO ctx1 rung clears the 0.0092 seed band, where two previously appeared to.
+
+**2026-08-27 — The routing penalty is two regions, not the method**  Prompted by the user asking how telling the model where to look could possibly hurt this much. Per class it does not: Pneumothorax (0.695 to 0.317) and Bone lesion (0.616 to 0.347) fall BELOW CHANCE and carry two thirds of the whole -0.0375, in every cohort and every checkpoint. Excluding them the penalty is -0.0146 on CT-RATE and -0.0159 on pediatrics, and 7 of the remaining 24 classes improve. Both route to the two regions we derived rather than segmented. Region repair is now queued ahead of any conclusion about anatomy routing as a method.
+
+**2026-08-26 — Phase 1 implemented end to end**  Slot layout, group-restricted attention, the C1 conditioner, the C2 relevance head, the context Q-Former and its step-0 identity gate, the training wiring, and the PHI scrubber for the indication field. The identity gate passes exactly: Z_final equals Z_gen, and the 39 unconditioned tokens match the published model to 0.0e+00.
+
+**2026-08-26 — Sixteen sbatch scripts pointed at a directory with no schema.py**  Every launcher sourced $HOME/arc-ct, which after a home reorganisation held the published ADULT tree -- no configs/stage2_peds.env, a different train_stage2.py. Without set -e the missing env file printed one line and the run continued as an 18-class CT-RATE job with the Q-Former off. Silent and entirely wrong. Fixed with ARCCT_ROOT, a hard gate, and check_env.py.
+
+**2026-08-26 — The first ladder measured almost nothing**  Two independent faults. beta initialised at -6, where the softplus gradient is sigma(-6) = 0.0025, so the relevance gate could not open -- beta moved a measured 0.00012 over the whole run. And the zero-init context modules trained at the warm-start learning rate. Rerun as ctx2 with beta_init -2 and a 20x learning-rate multiplier. Separately, a TypeError on ctx_out.r with C2 off killed nine of the ladder's twenty-four tasks.
 
 ## Standing conclusions
 
