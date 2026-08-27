@@ -59,6 +59,12 @@ STRUCTURAL = [
     (rf"(?i)\b(?:{MONTHS})\.?\s+\d{{1,2}}(?:st|nd|rd|th)?,?\s+\d{{4}}\b", "[DATE]"),
     (rf"(?i)\b(?:{MONTHS})\.?\s+\d{{4}}\b", "[DATE]"),
     (rf"(?i)\b\d{{1,2}}\s+(?:{MONTHS})\.?\s+\d{{4}}\b", "[DATE]"),
+    # Month + day with NO year ("aug 2"), and month/year or month-year with no
+    # day ("1/2020"). Both appear in real requisitions and neither is covered by
+    # the three patterns above, which all require a four-digit year in place.
+    (rf"(?i)\b(?:{MONTHS})\.?\s+\d{{1,2}}(?:st|nd|rd|th)?\b", "[DATE]"),
+    (rf"(?i)\b\d{{1,2}}(?:st|nd|rd|th)?\s+(?:{MONTHS})\b", "[DATE]"),
+    (re.compile(r"\b\d{1,2}[/-](?:19|20)\d{2}\b"), "[DATE]"),
     # A bare year. Deliberately not (18|19|20)\d\d: "2 cm" and "20 mm" must
     # survive, so this requires a four-digit token that is not a measurement.
     (re.compile(r"(?<![\d.])\b(?:19|20)\d{2}\b(?!\s*(?:cm|mm|ml|mg|hu|kg))", re.I), "[DATE]"),
@@ -68,6 +74,11 @@ STRUCTURAL = [
     (re.compile(r"\b(?:Dr|Doctor|Prof|Mr|Mrs|Ms|Miss)\.?\s+[A-Z][A-Za-z'\-]+"
                 r"(?:\s+[A-Z][A-Za-z'\-]+)?"), "[NAME]"),
     (re.compile(r"\b(?:room|bed|ward|suite|floor)\s*#?\s*[A-Z]?\d+[A-Z]?\b", re.I), "[LOC]"),
+    # Last sweep for a stray four-digit year. The structured rules above cover
+    # the renderings that carry a day or a month name; this catches the ones
+    # that reached the text some other way. The unit lookahead keeps "2020 HU"
+    # and similar measurements intact.
+    (re.compile(r"\b(?:19|20)\d{2}\b(?!\s*(?:cm|mm|ml|mg|hu|kg|cc|mcg))", re.I), "[DATE]"),
 ]
 # The site strip is not optional. It also removes the cohort flag: the design
 # forbids the model ever seeing which hospital a scan came from, and without
@@ -324,6 +335,55 @@ def scrub(text: str, row: RowPHI, pool: NamePool, vocab: frozenset,
     if truncated:
         hits["L6_truncated"] += 1
     # collapse runs of identical placeholders left behind by overlapping rules
+    t = re.sub(r"(\[(?:NAME|DATE|ID|SITE|CONTACT|LOC)\])(?:[\s,]*\1)+", r"\1", t)
+    return ScrubResult(_WS.sub(" ", t).strip(), hits, truncated)
+
+
+def scrub_structural(text: str, max_words: int = 64,
+                     max_chars: int = 512) -> ScrubResult:
+    """L0 + L2 + L5 + L6 only -- for text that is already de-identified upstream.
+
+    CT-RATE is public and carries no BCH patient, so the row-targeted and
+    dictionary layers have nothing to match and the fail-closed layer would just
+    shred ordinary prose. The structural rules still run: "already
+    de-identified" is an assumption, it costs nothing to check, and a hit there
+    is a finding worth reporting rather than one worth silencing.
+    """
+    hits: Counter = Counter()
+    t = normalise(text)
+
+    def _age_sub(m):
+        try:
+            return _age_replacement(float(m.group(1)), m.group(2))
+        except (TypeError, ValueError):
+            return "[AGE]"
+    t, n_age = AGE_PHRASE.subn(_age_sub, t)
+    if n_age:
+        hits["L5_age"] += n_age
+
+    for pat, repl in STRUCTURAL:
+        rx = re.compile(pat) if isinstance(pat, str) else pat
+        t, n = rx.subn(repl, t)
+        if n:
+            hits[f"L2_{repl.strip('[]')}"] += n
+    low = t.lower()
+    for lit in SITE_LITERALS:
+        if lit in low:
+            t, n = re.compile(re.escape(lit), re.I).subn("[SITE]", t)
+            if n:
+                hits["L2_SITE"] += n
+            low = t.lower()
+
+    truncated = False
+    words = t.split()
+    if len(words) > max_words:
+        t = " ".join(words[:max_words])
+        truncated = True
+    if len(t) > max_chars:
+        t = t[:max_chars].rsplit(" ", 1)[0]
+        truncated = True
+    if truncated:
+        hits["L6_truncated"] += 1
     t = re.sub(r"(\[(?:NAME|DATE|ID|SITE|CONTACT|LOC)\])(?:[\s,]*\1)+", r"\1", t)
     return ScrubResult(_WS.sub(" ", t).strip(), hits, truncated)
 

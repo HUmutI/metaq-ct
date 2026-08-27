@@ -100,6 +100,31 @@ def split_sections(text: str) -> dict[str, str]:
     return out
 
 
+INDICATION_KEYS = ("CLINICAL HISTORY", "CLINICAL INDICATION", "CLINICAL INFORMATION",
+                   "INDICATION", "REASON FOR EXAM", "HISTORY")
+
+
+def indication_of(text: str) -> tuple[str, str]:
+    """-> (body, which_header) for the clinical-context section, or ("", "").
+
+    The sectioniser has always recognised these headers and findings_impression()
+    has always thrown the section away. This returns it instead, so the same
+    split produces both the report text the model is trained against and the
+    indication it is conditioned on -- one parse, no second definition to drift.
+
+    The key order is significant: a report carrying both CLINICAL HISTORY and a
+    bare HISTORY should yield the more specific one, so HISTORY is last.
+    """
+    sections = split_sections(text)
+    if not sections:
+        return "", ""
+    for key in INDICATION_KEYS:
+        body = sections.get(key, "").strip()
+        if body:
+            return body, key
+    return "", ""
+
+
 def findings_impression(text: str) -> tuple[str, str, str]:
     """-> (findings, impression, how_it_was_split)"""
     sections = split_sections(text)
