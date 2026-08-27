@@ -70,5 +70,18 @@ echo "=== SET=$SET TAG=$TAG $(date) ==="
 $E/bin/python $ARCCT_ROOT/pipeline/lib/check_env.py --root "$ARCCT_ROOT" --expect-classes 27 --expect-schema peds || exit 78
 $E/bin/python $ARCCT_ROOT/tools/evaluate.py
 rc=$?
+
+# The age-stratified table, on every evaluation that has ages to stratify by.
+# Runs on the predictions the evaluator just wrote, so it costs seconds and
+# cannot disagree with the pooled numbers. Pediatric-only for now: CT-RATE has
+# 7 volumes under 18 out of 47,137, so an age breakdown there is a single group.
+if [ "$rc" = "0" ] && [ "$SET" != "ctrate" ]; then
+  $E/bin/python $ARCCT_ROOT/tools/age_stratified_eval.py \
+      --pred "$EVAL_RESULTS_DIR/predictions.npz" \
+      --csv  "$EVAL_RESULTS_DIR/auc_by_age.csv" --ci \
+      | tee "$EVAL_RESULTS_DIR/auc_by_age.txt"
+fi
+exit $rc
+rc=$?
 echo "=== rc=$rc $(date) ==="
 exit $rc
