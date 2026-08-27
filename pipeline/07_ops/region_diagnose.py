@@ -35,7 +35,7 @@ import torch.nn.functional as F
 sys.path.insert(0, "/home/ch278233/bch-arc-ct")
 from arcct.dataset import _pad_crop_hwd                      # noqa: E402
 
-MASKS = "/temp_work/ch278233/COMBINED_MASKS10_192"
+MASKS = os.environ.get("DIAG_MASKS", "/temp_work/ch278233/COMBINED_MASKS10_192")
 LABELS = "/temp_work/ch278233/COMBINED_labels_harmonised.csv"
 WANT = int(os.environ.get("DIAG_N", "300"))
 PROBE = [("Pneumothorax", 8), ("Bone lesion or fracture", 9),
@@ -68,9 +68,19 @@ def main() -> int:
 
     names = sorted(f[:-7] for f in os.listdir(MASKS) if f.endswith(".nii.gz"))
     names = [n for n in names if n in lab and os.path.exists(npz_for(n))]
-    # every 7th, so the sample is not one contiguous block of patient ids
-    names = names[::7][:WANT]
-    print(f"{len(names)} hacim orneklendi\n", flush=True)
+
+    # Stratify on the rare class. An unstratified sample of 300 volumes gave 11
+    # pneumothorax positives, which is not enough to design a region fix against:
+    # the positive mean is what the whole question turns on.
+    def pos(n, cls="Pneumothorax"):
+        try:
+            return int(float(lab[n].get(cls, "") or 0)) == 1
+        except (TypeError, ValueError):
+            return False
+    p_, n_ = [x for x in names if pos(x)], [x for x in names if not pos(x)]
+    names = p_[:WANT // 2] + n_[::max(1, len(n_) // max(WANT // 2, 1))][:WANT // 2]
+    print(f"{len(names)} hacim: {len(p_[:WANT // 2])} pnomotoraks pozitif "
+          f"(havuzda {len(p_)}), gerisi negatif\n", flush=True)
 
     acc: dict[tuple, list] = {}
     empty: dict[int, int] = {8: 0, 9: 0}
@@ -83,9 +93,24 @@ def main() -> int:
         except Exception:                                     # noqa: BLE001
             continue
         n += 1
+        try:
+            pos_now = int(float(lab[name].get("Pneumothorax", "") or 0)) == 1
+        except (TypeError, ValueError):
+            pos_now = False
         for region in (8, 9):
             if tokens(m, region) == 0:
                 empty[region] += 1
+        # Where is the air the shell was supposed to capture? Air outside the
+        # lung labels but inside the body, and how much of it region 8 claims.
+        # If the shell misses it, the fix is the shell; if there is none to miss,
+        # the fix is elsewhere.
+        air = (hu < -400) & (m != 0) & ~np.isin(m, (1, 2, 3, 4, 5))
+        body = hu > -900
+        air_out = air & body
+        got = air_out & (m == 8)
+        acc.setdefault(("__air__", 0, int(pos_now)), []).append(
+            (float(air_out.sum()), float(got.sum()),
+             100.0 * got.sum() / max(air_out.sum(), 1)))
         for cls, region in PROBE:
             v = lab[name].get(cls, "")
             try:
@@ -99,6 +124,13 @@ def main() -> int:
                 (float(hu[sel].mean()), int(sel.sum()), tokens(m, region)))
 
     print(f"{n} hacim okundu")
+    for y, tag in ((1, "pnomotoraks POZITIF"), (0, "pnomotoraks negatif")):
+        r = acc.get(("__air__", 0, y), [])
+        if r:
+            print(f"  {tag:22s} akciger disi hava {np.mean([x[0] for x in r]):9.0f} voksel, "
+                  f"bolge 8'in aldigi {np.mean([x[1] for x in r]):8.0f} "
+                  f"(%{np.mean([x[2] for x in r]):.1f})")
+    print()
     for region in (8, 9):
         print(f"  bolge {region}: 12^3 izgarasinda SIFIR token olan hacim "
               f"{empty[region]}/{n} (%{100 * empty[region] / max(n, 1):.1f}) "

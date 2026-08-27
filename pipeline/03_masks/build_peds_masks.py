@@ -38,7 +38,15 @@ from arcct.dataset import _pad_crop_hwd as _ct_pad_crop
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, "/home/ch278233/pipeline/lib")   # shared modules: ts_roi, qwen_extract, prepare_reports
-from ts_roi import FINE_LABEL_MAP_PEDS, FINE_LABEL_MAP_PEDS10, PEDS10_NAMES
+from ts_roi import (FINE_LABEL_MAP_PEDS, FINE_LABEL_MAP_PEDS10, PEDS10_NAMES,
+                     CHEST_WALL, PEDS)
+
+# The bony ring, used to derive the pleural region from the RIBCAGE rather than
+# from the lung. Sternum, ribs and vertebrae only -- not muscle, scapula or
+# clavicle, which sit outside the cavity and would swallow it.
+_BONE = [n for n in CHEST_WALL
+         if n == "sternum" or n.startswith(("rib_", "vertebrae_"))]
+RIBCAGE_IDS = [PEDS.index(n) + 1 for n in _BONE if n in PEDS]
 
 NAMES = {1: "lung_upper_lobe_left", 2: "lung_lower_lobe_left",
          3: "lung_upper_lobe_right", 4: "lung_middle_lobe_right",
@@ -51,6 +59,11 @@ TARGET_SHAPE = (192, 192, 96)
 LUNG_IDS = (1, 2, 3, 4, 5)
 PLEURA_ID = 11
 DILATE = (8, 8, 4)
+# Bridging the intercostal gaps before filling. At 1.5 mm in plane a gap between
+# adjacent ribs is roughly 10-20 mm, so the closing element has to be wider than
+# that or the fill leaks straight out through it.
+CLOSE_XY = 9
+PLEURA_MODE = "lung"
 
 # Small tubular structures vanish at the feature grid. Measured on 20 pediatric
 # volumes with the exact build_role_mask downsample (192x192x96 -> 12x12x12,
@@ -90,6 +103,38 @@ def _ellipsoid(rx: int, ry: int, rz: int) -> np.ndarray:
     return ((zz / rx) ** 2 + (yy / ry) ** 2 + (xx / rz) ** 2) <= 1.0
 
 
+def _ribcage_cavity(bone: np.ndarray) -> np.ndarray:
+    """Everything enclosed by the bony thorax, slice by slice.
+
+    Why this instead of dilating the lung: the shell built by dilating the lung
+    union is not an anatomical definition, it is a FUNCTION OF THE PATHOLOGY.
+    TotalSegmentator folds pneumothorax air into the lung field, so a positive
+    volume has a larger 'lung', the shell lands further out in the chest wall,
+    and the region ends up DENSER on positives than on negatives. Measured on 400
+    volumes stratified for the class: +6 HU on positives against -98 HU on
+    negatives, a 104 HU inversion, with the region twice the size. That is why
+    the routed read-out scores pneumothorax at 0.317, below chance -- the pooled
+    feature is anti-correlated with the finding.
+
+    The ribcage does not move when the lung collapses, so a region defined from it
+    cannot carry that confound.
+
+    Filled per axial slice, not in 3D: the ribs are separate objects and a 3D fill
+    escapes through the gaps between them, above the first rib and below the
+    twelfth. Closing first bridges the intercostal spaces so the 2D fill has a
+    closed contour to fill.
+    """
+    out = np.zeros_like(bone, dtype=bool)
+    el = np.ones((CLOSE_XY, CLOSE_XY), dtype=bool)
+    for z in range(bone.shape[2]):
+        sl = bone[:, :, z]
+        if not sl.any():
+            continue
+        closed = ndimage.binary_closing(sl, structure=el)
+        out[:, :, z] = ndimage.binary_fill_holes(closed) & ~closed
+    return out
+
+
 def build(ts_path: str, out_path: str) -> dict:
     raw = np.asanyarray(nib.load(ts_path).dataobj).astype(np.int16)
     merged = np.zeros_like(raw, dtype=np.uint8)
@@ -110,11 +155,22 @@ def build(ts_path: str, out_path: str) -> dict:
             grown = ndimage.binary_dilation(b, structure=_ellipsoid(*SMALL_DILATE))
             m[grown & (m == 0)] = r
 
-    # Then the pleural shell takes whatever background is left around the lungs.
-    lung = np.isin(m, LUNG_IDS)
-    if lung.any():
-        shell = ndimage.binary_dilation(lung, structure=_ellipsoid(*DILATE)) & ~lung
-        m[shell & (m == 0)] = PLEURA_ID      # real organs always win
+    # Then the pleural region. Both modes claim BACKGROUND only, so a real organ
+    # always wins; they differ in what they propose.
+    if PLEURA_MODE == "cavity":
+        # Carried through the SAME pad/crop as the labels, then filled at
+        # 192x192x96 rather than on the native grid -- 96 slices of 192x192
+        # instead of ~300 of 512x512, for an identical result, since the
+        # transform is pure pad/crop with no interpolation.
+        bone = np.round(_ct_pad_crop(
+            np.isin(raw, RIBCAGE_IDS).astype(np.float32), TARGET_SHAPE)).astype(bool)
+        cav = _ribcage_cavity(bone)
+        m[cav & (m == 0)] = PLEURA_ID
+    else:
+        lung = np.isin(m, LUNG_IDS)
+        if lung.any():
+            shell = ndimage.binary_dilation(lung, structure=_ellipsoid(*DILATE)) & ~lung
+            m[shell & (m == 0)] = PLEURA_ID
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     nib.save(nib.Nifti1Image(m, affine=np.eye(4)), out_path)
 
@@ -144,11 +200,16 @@ def main() -> int:
     ap.add_argument("--shard-n", type=int, default=int(os.environ.get("SHARD_N", "1")))
     ap.add_argument("--no-map", action="store_true",
                     help="output stem already equals the VolumeName (CT-RATE)")
+    ap.add_argument("--pleura", choices=["lung", "cavity"], default="lung",
+                    help="how region 11/8 is derived: dilate the lung union "
+                         "(the original, confounded by pneumothorax) or fill the "
+                         "bony ribcage (independent of the lung segmentation)")
     ap.add_argument("--schema", choices=["13", "10"], default="13",
                     help="10 = the measured pediatric schema with merged small regions")
     a = ap.parse_args()
 
-    global FINE_LABEL_MAP_PEDS, PLEURA_ID, SMALL_IDS, NAMES, N_REGIONS
+    global FINE_LABEL_MAP_PEDS, PLEURA_ID, SMALL_IDS, NAMES, N_REGIONS, PLEURA_MODE
+    PLEURA_MODE = a.pleura
     if a.schema == "10":
         FINE_LABEL_MAP_PEDS = FINE_LABEL_MAP_PEDS10
         PLEURA_ID = 8            # pleura moves from 11 to 8 in the merged schema

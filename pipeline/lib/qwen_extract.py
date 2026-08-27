@@ -92,39 +92,115 @@ LABEL_DEFS = {
         "NOT pulmonary arteries or pulmonary veins. "
         "NOT cardiac valve, annulus or pericardial calcification. "
         "NOT tracheal or bronchial cartilage calcification. "
-        "NOT ligamentum arteriosum calcification, which is a normal variant"
+        "NOT ligamentum arteriosum or ductus arteriosus calcification, which is "
+        "a normal variant. "
+        "NOT calcification at a surgical cannulation, anastomosis or graft site. "
+        "Calcification in an abdominal systemic branch (hepatic, splenic, renal, "
+        "mesenteric) DOES count"
     ),
-    "Cardiomegaly": "enlarged cardiac silhouette",
+    # 17.1% unanchored on 240 positives. The literal reading is deliberate even
+    # though it costs a clinically obvious case: an 8.5 cm left atrium with the
+    # heart never called enlarged scores 0 here. CT-RATE's adult labels come from
+    # RadBERT reading the word, and the whole point of one prompt across both
+    # cohorts is that this class means the same thing on both sides.
+    "Cardiomegaly": (
+        "the report calls the heart or cardiac silhouette enlarged, or says "
+        "cardiomegaly. "
+        "NOT dilatation of a single chamber (left atrium, right ventricle) "
+        "unless the heart overall is also called enlarged. "
+        "NOT main pulmonary artery or aortic dilatation. "
+        "NOT pericardial effusion"),
     "Pericardial effusion": "fluid in the pericardial space",
     "Coronary artery wall calcification": "calcification specifically in coronary arteries",
     "Hiatal hernia": "stomach herniating through the diaphragmatic hiatus",
-    # "prominent" removed on purpose. Pediatric reports use it to mean the
-    # opposite of pathologic - "prominent nodes ... none are considered
-    # pathologic by CT size criteria" - and including it drove this class to the
-    # lowest agreement (kappa 0.32) and lowest citation support (22.4%) of all 18.
-    "Lymphadenopathy": "lymph nodes the report calls enlarged, pathologic, or "
-                       "abnormal by size criteria; nodes described as prominent "
-                       "but not pathologic are NOT positive",
+    # Second correction to this class, and the first one failing is the lesson.
+    # Removing "prominent" was right but not sufficient: on all 8817 reports,
+    # 36.2% of the 693 positives still cite a sentence that calls the nodes
+    # sub-threshold or benign (22.5% "subcentimeter"/"reactive"/"fatty hila",
+    # a further 13.7% whose only measurement is under 10 mm). Against the gold
+    # standard the error is perfectly one-sided - 17 false positives, 0 misses,
+    # kappa 0.676. A prose carve-out ("not pathologic") is evidently something
+    # the model can read past; a number is not. So state the threshold.
+    "Lymphadenopathy": (
+        "lymph nodes the report calls enlarged, pathologic, or abnormal by size "
+        "criteria, or that measure 10 mm or more in short axis. "
+        "NOT nodes described as subcentimeter, sub-centimeter, or under 10 mm. "
+        "NOT nodes called prominent, scattered, nonspecific, reactive, normal in "
+        "size, or benign in morphology (fatty hila). "
+        "An increase in the size or number of nodes that remain subcentimeter is "
+        "NOT lymphadenopathy"),
     # Bullae and pneumatoceles moved to Pulmonary cyst: in this cohort they are
     # cystic fibrosis and post-infectious change, not smoking-related alveolar
     # destruction. Leaving them here made a CF scan read as emphysema.
     "Emphysema": "emphysema from alveolar destruction (adult, smoking-related)",
     "Atelectasis": "atelectasis, collapse, volume loss",
     "Lung nodule": "nodule, micronodule, nodularity, granuloma",
-    "Lung opacity": "ground-glass, airspace or parenchymal opacity not better named elsewhere",
-    "Pulmonary fibrotic sequela": "fibrosis, scarring, reticulation, architectural distortion",
+    # "not better named elsewhere" asked the reader to do a comparison it was
+    # never given the terms for, and all five gold-standard annotators named this
+    # the hardest class. The operational rule below is the one they converged on
+    # independently: score the head noun, not the modifier.
+    "Lung opacity": (
+        "ground-glass, airspace or parenchymal opacity where opacity, "
+        "opacification or ground-glass is the finding itself. "
+        "NOT when the word only modifies another finding: score "
+        "\"consolidative opacity\" as consolidation and \"nodular opacity\" as a "
+        "nodule. NOT ground-glass that is only a halo around a nodule or "
+        "cavity"),
+    # Claude called this 14 times where Qwen did not and missed only 2, with 0%
+    # unanchored citations against Qwen's 6.5% - the gap is the surgical-scarring
+    # overlap, so say that both can be true at once rather than making the reader
+    # choose.
+    "Pulmonary fibrotic sequela": (
+        "fibrosis, scarring, reticulation, architectural distortion or "
+        "honeycombing"),
     "Pleural effusion": "fluid in the pleural space",
     "Mosaic attenuation pattern": "mosaic attenuation, air trapping, mosaic perfusion",
-    "Peribronchial thickening": "bronchial or peribronchial wall thickening, cuffing",
+    # Worst citation support of all 27 classes: 20.3% of 1327 positives cite a
+    # sentence with no bronchial wall in it at all. The mechanism is visible in
+    # evidence.tsv - ped_03305_13 cites "Similar thickening of the left major
+    # fissure" for this label. One unqualified word, "thickening", is enough for
+    # the model to attach the class to the nearest sentence containing it, so
+    # the fix is to name the other thickenings and rule them out.
+    "Peribronchial thickening": (
+        "thickening of the bronchial or peribronchial wall, bronchial cuffing, "
+        "bronchial wall thickening. The airway wall itself must be thickened. "
+        "NOT fissural thickening. NOT pleural thickening. NOT interlobular "
+        "septal or interstitial thickening. NOT chest-wall or soft-tissue "
+        "thickening. NOT bronchiectasis on its own"),
     "Consolidation": "consolidation, dense airspace disease, pneumonia",
     "Bronchiectasis": "bronchiectasis, bronchial dilatation",
-    "Interlobular septal thickening": "interlobular septal or interstitial septal thickening",
+    # Same failure, same cause: 15.7% unanchored, and ped_03305_13 cites "New
+    # subtle tree in bud groundglass nodularity" for it - the tree-in-bud
+    # sentence, reused verbatim for a second class.
+    "Interlobular septal thickening": (
+        "thickening of the interlobular septa, interstitial septal thickening, "
+        "Kerley lines, crazy-paving. "
+        "NOT peribronchial or bronchial wall thickening. NOT fissural "
+        "thickening. NOT pleural thickening. NOT tree-in-bud or centrilobular "
+        "nodularity. NOT ground-glass opacity on its own"),
     "Post-surgical or post-treatment change": "post-surgical or post-treatment change: "
         "resection, lobectomy, thoracotomy, sternotomy, suture or staple line, "
         "surgical scarring, post-radiation change",
-    "Pulmonary metastases": "metastasis or metastatic deposit named as such "
-        "(keep separate from a plain nodule)",
-    "Tree-in-bud": "tree-in-bud nodularity or centrilobular branching opacities",
+    # 9.0% unanchored. The overlap rule is stated because our own annotators
+    # split on it: one scored an explicitly metastatic nodule as metastasis only,
+    # the others as both.
+    "Pulmonary metastases": (
+        "metastasis or metastatic deposit that the report names as metastatic "
+        "(keep separate from a plain nodule). "
+        "NOT nodules merely being followed in a cancer patient. "
+        "NOT \"recurrent disease\" or \"residual disease\" unless metastasis is "
+        "named"),
+    # This one is our own wording, not a model failure. "or centrilobular
+    # branching opacities" was meant to catch the pattern described without its
+    # name; what it actually did was license every "centrilobular groundglass
+    # nodule" in the cohort - 8 one-sided false positives against the gold
+    # standard, 0 misses. Centrilobular nodules are only tree-in-bud when they
+    # branch, so the branching has to carry the weight.
+    "Tree-in-bud": (
+        "tree-in-bud nodularity, or centrilobular nodules the report describes "
+        "as branching or linear-and-nodular. "
+        "NOT centrilobular ground-glass or solid nodules without branching. "
+        "NOT ground-glass nodularity on its own"),
     "Pulmonary cyst": "pulmonary cyst or cystic change, bulla, bleb, pneumatocele, "
         "congenital lobar overinflation",
     "Mass or neoplasm": "thoracic mass, tumour or neoplasm - mediastinal, thymic, "
@@ -132,8 +208,18 @@ LABEL_DEFS = {
     "Mucus plugging": "mucus or mucous plugging, mucoid impaction, mucus-filled airways",
     "Pleural thickening or nodule": "pleural thickening, pleural nodule, pleural mass "
         "or deposit",
-    "Bone lesion or fracture": "fracture, lytic or blastic bone lesion, rib or "
-        "vertebral lesion, marrow replacement",
+    # The only class where the disagreement is two-sided (10 vs 15) - and the
+    # five gold-standard annotators split on it among themselves, which means the
+    # definition, not the reader, is underspecified. Schmorl's nodes went 1 for
+    # one annotator and 0 for two others. Both choices are defensible; leaving it
+    # unstated is not. Degenerative and congenital findings are ruled out because
+    # this class exists to carry clinically actionable osseous disease.
+    "Bone lesion or fracture": (
+        "fracture, lytic or sclerotic focal bone lesion, vertebral compression "
+        "or height loss, rib or vertebral lesion, marrow replacement. "
+        "NOT Schmorl's nodes. NOT degenerative endplate or disc change. "
+        "NOT scoliosis or kyphosis. NOT congenital rib fusion or a rib anomaly. "
+        "NOT osteopenia on its own"),
     "Pneumothorax": "pneumothorax or hydropneumothorax",
 }
 
@@ -252,11 +338,21 @@ Decide, for each of the {n_findings} findings below, whether the report states i
 For each finding return an object with:
   "p": 1 if the report states the finding is present or strongly suspected,
        otherwise 0.
-  "e": the index of the single sentence that best supports p=1, or -1 when p=0.
+  "e": the index of the single sentence that STATES the finding, or -1 when p=0.
 
 Rules:
-- Explicitly negated findings ("no pleural effusion", "without consolidation",
-  "resolved") are 0.
+- The evidence sentence is a GATE, not a justification. If no single sentence
+  states the finding itself, p is 0. A sentence that mentions a different but
+  similar-sounding finding is not evidence: "thickening of the major fissure" is
+  not evidence for bronchial wall thickening, and "tree-in-bud nodularity" is not
+  evidence for interlobular septal thickening.
+- Never cite the same sentence for two findings unless that sentence names both.
+- Explicitly negated findings ("no pleural effusion", "without consolidation")
+  are 0.
+- A finding described as resolved or improved to absent is 0: "interval
+  resolution of the pneumothorax" is 0. But an unchanged finding is PRESENT:
+  "no significant change in the pulmonary nodules" and "stable bronchiectasis"
+  are both 1.
 - Findings mentioned only as clinical history, indication, or as something to
   exclude are 0.
 - A finding described in a comparison to a prior study but not present now is 0.
