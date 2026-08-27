@@ -4,7 +4,11 @@
 # bch-gpu-pe could start in minutes; letting SLURM take whichever frees
 # first is the difference between results tomorrow and results next week.
 #SBATCH --partition=bch-gpu-pe,bch-gpu
-#SBATCH --gres=gpu:1
+# gpu:large, not gpu:1. Adding bch-gpu-pe to the partition list brought its
+# gpu:medium nodes with it, and a 24 GB TITAN RTX cannot hold this recipe --
+# ct_only seed=1 landed on gpu-1-0 and OOMed at 22.4 of 23.5 GiB. bch-gpu had
+# only large and xlarge cards, so this never came up before tonight.
+#SBATCH --gres=gpu:large:1
 #SBATCH --time=1-12:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=96G
