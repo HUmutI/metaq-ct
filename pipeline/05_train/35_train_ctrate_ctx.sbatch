@@ -57,6 +57,24 @@ set -a; . "$CFG"; . "$ARCCT_ROOT/configs/stage2_ctrate_ctx.env"; set +a
 
 export RAC_SCHEMA=ctrate
 
+# An env file that is missing, empty, or half-sourced does not fail -- it leaves
+# the code defaults in place, and the code defaults are RAC_CTX_BETA_INIT=-6.0 and
+# RAC_CTX_LR_MULT=1.0: precisely the two settings that made the first pediatric
+# ladder measure nothing at all. beta moved 0.00012 over an entire run at -6, and
+# the zero-init modules never left zero on the warm-start rate. This file WAS
+# emptied once, by a sync loop that redirected it onto itself, and the identity
+# gate passed on the empty version without complaint because every default is
+# individually legal.
+for v in RAC_CTX_BETA_INIT RAC_CTX_LR_MULT RAC_CTX_FILM_EPS RAC_IND_DROPOUT \
+         RAC_CF_PROB RAC_CTX_PTOK_WEIGHT RAC_CTX_SELFATTN RAC_FOCAL_CLASSES \
+         RAC_QFORMER_QUERIES RAC_TOTAL_UPDATES RAC_BATCH_SIZE RAC_LR; do
+  eval "val=\${$v:-}"
+  [ -n "$val" ] || { echo "FATAL: $v bos -- config sourcelanmamis"; exit 78; }
+done
+[ "$RAC_CTX_BETA_INIT" = "-6.0" ] && { echo "FATAL: beta_init=-6.0, olu gradyan"; exit 78; }
+[ "$RAC_CTX_LR_MULT" = "1.0" ] && { echo "FATAL: lr_mult=1.0, sifir-init moduller ogrenmez"; exit 78; }
+echo "    config dogrulandi: beta_init=$RAC_CTX_BETA_INIT lr_mult=$RAC_CTX_LR_MULT"
+
 TASK=${SLURM_ARRAY_TASK_ID:-0}
 CTR_RUNG=${CTR_RUNG:-c2}
 if [ "$TASK" -lt 3 ]; then RUNG=ct_only; else RUNG=$CTR_RUNG; fi
