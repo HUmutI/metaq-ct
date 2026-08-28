@@ -525,6 +525,46 @@ experiments:
       fitted to a subsample selected by acquisition order.
 
 journal:
+  - date: 2026-08-28
+    title: A sync loop emptied the context config, and the identity gate passed anyway
+    text: >-
+      configs/stage2_ctrate_ctx.env was zero bytes and had been committed that way:
+      a loop meant to copy it into the second pipeline tree resolved to the file
+      itself, and a redirect onto its own source truncates it. The gate passed on
+      the empty file, because a missing env file does not fail -- it leaves the code
+      defaults, and those are beta_init = -6.0 and lr_mult = 1.0, exactly the two
+      settings that made the first pediatric ladder measure nothing. Six runs would
+      have spent three days reproducing that with nothing objecting, since every
+      individual default is legal. The launcher now rejects an empty variable and
+      those two values by name.
+  - date: 2026-08-28
+    title: Two shards hung on a sick node, and the watchdog is what said so
+    text: >-
+      Both remaining segmentation shards stopped writing for eight and fourteen
+      hours while SLURM still showed them RUNNING -- a hung job is not a failed one.
+      Both were on gpu-25-0, one after a FileNotFoundError on its own node-local
+      nnUNet scratch file and a volume that took 2,185 s against a 94 s median. The
+      91 volumes they owed were finished by a cleanup array with that node excluded
+      by name. Segmentation is complete at 15,575 of 15,575.
+  - date: 2026-08-28
+    title: Two alarms from yesterday were misreadings of my own
+    text: >-
+      |W_ind|/|W_gen| = 0.000 and cf = 0.0000 were read as the context pathway
+      failing to train. Both were structural: the run in question is the
+      fusion_gated rung, which does not use the linear fusion at all, so its weight
+      stays at its [I|0] init and the ratio is zero by construction -- and with the
+      gate shut the indication cannot change the prediction, so the counterfactual
+      term is exactly zero too. The c2 rungs show cf firing normally at 0.0013 to
+      0.0056. The ladder is not invalidated. A separate 1000x slowdown was real but
+      transient: the training was starved of I/O while 29 segmentation shards read
+      full volumes off NFS, and it returned to 2.6 s/update once they finished.
+  - date: 2026-08-28
+    title: Stage 2 was running single-threaded on the critical path
+    text: >-
+      Reducing the raw labels to 10-region masks measured 14.9 volumes a minute as
+      one process -- 17.4 hours for 15,575, with the CT-RATE run waiting on it.
+      build_peds_masks.py already sharded and already skipped existing outputs, so
+      the parallelism was there and simply unused. Re-run as a 16-way array.
   - date: 2026-08-27
     title: The ribcage-derived pleural region does not work -- measured, not assumed
     text: >-

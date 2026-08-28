@@ -4,7 +4,7 @@ Every run of this project: finished, in flight, and queued. **Generated** by
 `tools/exp_log.py` -- do not edit the tables by hand, edit `docs/experiments.yaml`
 and re-render. Every AUC below is read off disk at render time.
 
-Rendered 2026-08-27 22:41 UTC.
+Rendered 2026-08-28 17:13 UTC.
 
 Two architectures appear here and they must never be compared casually:
 
@@ -141,26 +141,16 @@ The rerun with beta_init -2, a 20x learning-rate multiplier on the zero-init con
 
 | experiment | dates | arch | cohort · classes | masks | seeds | val AUC | state |
 |---|---|---|---|---|---|---|---|
-| **ctx2/ct_only** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 2/3 | 0.7909 ±0.0018 | partial |
+| **ctx2/ct_only** | 2026-08-27 → 2026-08-28 | context | peds 7,001 · 27 | peds 100% | 3/3 | 0.7908 ±0.0013 | done |
 | **ctx2/concat** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 3/3 | 0.7854 ±0.0025 | done |
-| **ctx2/c1_xattn** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 1/3 | 0.7962 | partial |
-| **ctx2/c1_full** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 1/3 | 0.7960 | partial |
-| **ctx2/c2** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | queued |
-| **ctx2/fusion_gated** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | queued |
+| **ctx2/c1_xattn** | 2026-08-27 → 2026-08-28 | context | peds 7,001 · 27 | peds 100% | 3/3 | 0.7942 ±0.0024 | done |
+| **ctx2/c1_full** | 2026-08-27 → 2026-08-28 | context | peds 7,001 · 27 | peds 100% | 3/3 | 0.7940 ±0.0022 | done |
+| **ctx2/c2** | 2026-08-27 → 2026-08-28 | context | peds 7,001 · 27 | peds 100% | 3/3 | 0.7925 ±0.0028 | queued |
+| **ctx2/fusion_gated** | 2026-08-27 → 2026-08-28 | context | peds 7,001 · 27 | peds 100% | 2/3 | 0.7954 ±0.0014 | queued |
 | **ctx2/isolation_off** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | queued |
-| **ctx2/age_scalar** | -- | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | queued |
-
-`ctx2/ct_only`: 1 seed(s) died before update 3,200 and are excluded from the mean (`ctx2_ct_only_seed0`).
+| **ctx2/age_scalar** | 2026-08-27 → 2026-08-28 | context | peds 7,001 · 27 | peds 100% | 3/3 | 0.7957 ±0.0017 | queued |
 
 **ctx2/ct_only -- what it settled.** The architecture-only control: the context model with the Q-Former's context path switched off, so it is the published model under the new code path. Every other rung is a delta against this, not against V1.
-
-`ctx2/c1_xattn`: 2 seed(s) died before update 3,200 and are excluded from the mean (`ctx2_c1_xattn_seed1`, `ctx2_c1_xattn_seed2`).
-
-`ctx2/c1_full`: 2 seed(s) died before update 3,200 and are excluded from the mean (`ctx2_c1_full_seed1`, `ctx2_c1_full_seed2`).
-
-`ctx2/c2`: 3 seed(s) died before update 3,200 and are excluded from the mean (`ctx2_c2_seed0`, `ctx2_c2_seed1`, `ctx2_c2_seed2`).
-
-`ctx2/fusion_gated`: 3 seed(s) died before update 3,200 and are excluded from the mean (`ctx2_fusion_gated_seed0`, `ctx2_fusion_gated_seed1`, `ctx2_fusion_gated_seed2`).
 
 ## Joint context runs (the headline)
 
@@ -209,6 +199,14 @@ The winner rerun with anatomy masks on the adult half too. Held separate from th
 ## Journal
 
 Dated record of what happened and what it changed. Newest first.
+
+**2026-08-28 — A sync loop emptied the context config, and the identity gate passed anyway**  configs/stage2_ctrate_ctx.env was zero bytes and had been committed that way: a loop meant to copy it into the second pipeline tree resolved to the file itself, and a redirect onto its own source truncates it. The gate passed on the empty file, because a missing env file does not fail -- it leaves the code defaults, and those are beta_init = -6.0 and lr_mult = 1.0, exactly the two settings that made the first pediatric ladder measure nothing. Six runs would have spent three days reproducing that with nothing objecting, since every individual default is legal. The launcher now rejects an empty variable and those two values by name.
+
+**2026-08-28 — Two shards hung on a sick node, and the watchdog is what said so**  Both remaining segmentation shards stopped writing for eight and fourteen hours while SLURM still showed them RUNNING -- a hung job is not a failed one. Both were on gpu-25-0, one after a FileNotFoundError on its own node-local nnUNet scratch file and a volume that took 2,185 s against a 94 s median. The 91 volumes they owed were finished by a cleanup array with that node excluded by name. Segmentation is complete at 15,575 of 15,575.
+
+**2026-08-28 — Two alarms from yesterday were misreadings of my own**  |W_ind|/|W_gen| = 0.000 and cf = 0.0000 were read as the context pathway failing to train. Both were structural: the run in question is the fusion_gated rung, which does not use the linear fusion at all, so its weight stays at its [I|0] init and the ratio is zero by construction -- and with the gate shut the indication cannot change the prediction, so the counterfactual term is exactly zero too. The c2 rungs show cf firing normally at 0.0013 to 0.0056. The ladder is not invalidated. A separate 1000x slowdown was real but transient: the training was starved of I/O while 29 segmentation shards read full volumes off NFS, and it returned to 2.6 s/update once they finished.
+
+**2026-08-28 — Stage 2 was running single-threaded on the critical path**  Reducing the raw labels to 10-region masks measured 14.9 volumes a minute as one process -- 17.4 hours for 15,575, with the CT-RATE run waiting on it. build_peds_masks.py already sharded and already skipped existing outputs, so the parallelism was there and simply unused. Re-run as a 16-way array.
 
 **2026-08-27 — The ribcage-derived pleural region does not work -- measured, not assumed**  Rebuilding region 8 from the bony thorax instead of the lung leaves it essentially EMPTY: 130-212 voxels against the old 133k-265k, and 207 of 208 volumes reach ZERO tokens on the 12x12x12 grid. A region with no tokens makes its query UNRESTRICTED, so this is not a fix but a silent deletion of the anatomy query. The cause is obvious in hindsight: the ribcage interior is already lung, heart and vessels, and the pleural region may only claim background, so nothing is left to claim. The decision file was NOT written and the overnight chain keeps the existing definition -- known behaviour beats an unverified one. What the first measurement actually implies is narrower and more useful: TotalSegmentator folds pneumothorax air INTO the lung label, so no pleural-space definition can capture it, and the candidate worth testing next is routing Pneumothorax to the lung lobes rather than to region 8.
 
