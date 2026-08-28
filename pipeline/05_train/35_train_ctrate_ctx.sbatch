@@ -94,6 +94,22 @@ OUT=/temp_work/ch278233/runs/ctrate_${RUNG}_seed${RAC_SEED}
 mkdir -p "$OUT"
 export RAC_RESULTS_DIR=$OUT
 
+# Can this run actually write a checkpoint? The filesystem reported 158 TB free
+# while the user quota was exhausted, so df says nothing useful here. Six runs
+# started, one reached update 1,200 and a full validation (auc 0.8711), and then
+# every one of them died -- one on "CTClip.1200.pt cannot be opened" and the rest
+# on a cuDNN workspace failure downstream of the same cause. An hour of GPU each,
+# to discover something a 2 GB write would have found in a second.
+TESTF=$OUT/.quota_probe
+if ! dd if=/dev/zero of="$TESTF" bs=1M count=2048 status=none 2>/dev/null; then
+  rm -f "$TESTF"
+  echo "FATAL: $OUT icine 2 GB yazilamiyor (kota?). Checkpoint 1.3 GB, bu kosu"
+  echo "       ilk kayitta olurdu. df bos gosterse bile kota dolu olabilir."
+  exit 78
+fi
+rm -f "$TESTF"
+echo "    disk yazma testi gecti (2 GB)"
+
 D=/temp_work/ch278233/CTRATE_ONLY
 export RAC_DATA_TRAIN=/temp_work/ch278233/COMBINED_NPZ
 export RAC_DATA_VALID=/temp_work/ch278233/COMBINED_NPZ
