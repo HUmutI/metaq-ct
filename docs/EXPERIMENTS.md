@@ -4,7 +4,7 @@ Every run of this project: finished, in flight, and queued. **Generated** by
 `tools/exp_log.py` -- do not edit the tables by hand, edit `docs/experiments.yaml`
 and re-render. Every AUC below is read off disk at render time.
 
-Rendered 2026-08-28 17:13 UTC.
+Rendered 2026-08-31 16:07 UTC.
 
 Two architectures appear here and they must never be compared casually:
 
@@ -21,10 +21,10 @@ Recipe search on the 8,816-volume BCH cohort, warm-started from the published ad
 
 | experiment | dates | arch | cohort · classes | masks | seeds | val AUC | state |
 |---|---|---|---|---|---|---|---|
-| **V1** | 2026-08-22 → 2026-08-27 | ARC-CT | peds 7,001 · 27 | peds 100% | 3/3 | 0.7922 ±0.0046 | done |
-| **V2** | 2026-08-23 | ARC-CT | peds 7,001 · 27 | peds 100% | 1/1 | 0.7974 | done |
-| **V3** | 2026-08-23 | ARC-CT | peds 7,001 · 27 | peds 100% | 1/1 | 0.7971 | done |
-| **V4** | 2026-08-23 | ARC-CT | peds 7,001 · 27 | peds 100% | 1/1 | 0.7972 | done |
+| **V1** | 2026-08-22 → 2026-08-27 | ARC-CT | peds 7,001 · 27 | peds 100% | 2/3 | 0.7902 ±0.0043 | partial |
+| **V2** | 2026-08-23 | ARC-CT | peds 7,001 · 27 | peds 100% | 0/1 | -- | STALLED |
+| **V3** | 2026-08-23 | ARC-CT | peds 7,001 · 27 | peds 100% | 0/1 | -- | STALLED |
+| **V4** | 2026-08-23 | ARC-CT | peds 7,001 · 27 | peds 100% | 0/1 | -- | STALLED |
 | **V5** | 2026-08-23 | ARC-CT | peds 7,001 · 27 | peds 100% | 1/1 | 0.8019 | done |
 
 Held-out evaluation:
@@ -49,7 +49,15 @@ Held-out evaluation:
 | V5 | `ctrate/V5_masked` | 3002 | 27 | 0.8000 | 0.7897–0.8096 | 0.7556 | -0.0444 |
 | V5 | `combined/V5` | 6362 | 27 | 0.7841 | 0.7763–0.7910 | 0.7408 | -0.0433 |
 
+`V1`: 1 seed(s) died before update 2,000 and are excluded from the mean (`peds_finetune`).
+
 **V1 -- what it settled.** The reference recipe, and the source of the seed band: three seeds of an identical configuration give sd = 0.0046, so a ladder delta below about 0.0092 is inside seed noise and is not a difference. Every ablation in this project is read against that number.
+
+`V2`: 1 seed(s) died before update 2,000 and are excluded from the mean (`peds_finetune_v2`).
+
+`V3`: 1 seed(s) died before update 2,000 and are excluded from the mean (`peds_finetune_v3`).
+
+`V4`: 1 seed(s) died before update 2,000 and are excluded from the mean (`peds_finetune_v4`).
 
 **V5 -- what it settled.** Best pediatric held-out AUC of the recipe search, and the checkpoint the age-stratified analysis runs on. Its lead over V1 on pediatrics is inside the 0.0046 seed band, so it is the better recipe by selection, not by a demonstrated margin.
 
@@ -61,7 +69,7 @@ The same architecture trained on both cohorts together, testing whether adult vo
 |---|---|---|---|---|---|---|---|
 | **C16** | 2026-08-22 → 2026-08-23 | ARC-CT | peds + CT-RATE 16k · 27 | peds only | 1/1 | 0.8175 | done |
 | **C47mix** | 2026-08-23 → 2026-08-24 | ARC-CT | peds + CT-RATE 47k · 27 | peds only | 1/1 | 0.8248 | done |
-| **C47harm** | 2026-08-24 → 2026-08-25 | ARC-CT | peds + CT-RATE 47k · 27 | peds only | 1/1 | 0.8170 | done |
+| **C47harm** | 2026-08-24 | ARC-CT | peds + CT-RATE 47k · 27 | peds only | 1/1 | 0.8170 | done |
 
 Held-out evaluation:
 
@@ -114,22 +122,28 @@ Eight rungs x three seeds on pediatrics alone, adding one mechanism at a time. T
 
 | experiment | dates | arch | cohort · classes | masks | seeds | val AUC | state |
 |---|---|---|---|---|---|---|---|
-| **ctx/ct_only** | 2026-08-26 → 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 2/3 | 0.7906 ±0.0003 | partial |
-| **ctx/concat** | 2026-08-26 → 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 3/3 | 0.7928 ±0.0016 | done |
-| **ctx/c1_xattn** | 2026-08-26 → 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 2/3 | 0.7989 ±0.0007 | partial |
-| **ctx/c1_full** | 2026-08-26 → 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 3/3 | 0.7980 ±0.0017 | done |
-| **ctx/c2** | 2026-08-26 → 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 3/3 | 0.7979 ±0.0017 | done |
-| **ctx/fusion_gated** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 1/3 | 0.7949 | partial |
+| **ctx/ct_only** | 2026-08-26 → 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 1/3 | 0.7904 | partial |
+| **ctx/concat** | 2026-08-26 → 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 1/3 | 0.7917 | partial |
+| **ctx/c1_xattn** | 2026-08-26 → 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 1/3 | 0.7984 | partial |
+| **ctx/c1_full** | 2026-08-26 → 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 1/3 | 0.7984 | partial |
+| **ctx/c2** | 2026-08-26 → 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 1/3 | 0.7984 | partial |
+| **ctx/fusion_gated** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | STALLED |
 | **ctx/isolation_off** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | STALLED |
 | **ctx/age_scalar** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 0/1 | -- | STALLED |
 
-`ctx/ct_only`: 1 seed(s) died before update 2,000 and are excluded from the mean (`ctx_ct_only_seed1`).
+`ctx/ct_only`: 2 seed(s) died before update 2,000 and are excluded from the mean (`ctx_ct_only_seed0`, `ctx_ct_only_seed1`).
 
-`ctx/c1_xattn`: 1 seed(s) died before update 2,000 and are excluded from the mean (`ctx_c1_xattn_seed1`).
+`ctx/concat`: 2 seed(s) died before update 2,000 and are excluded from the mean (`ctx_concat_seed0`, `ctx_concat_seed2`).
+
+`ctx/c1_xattn`: 2 seed(s) died before update 2,000 and are excluded from the mean (`ctx_c1_xattn_seed0`, `ctx_c1_xattn_seed1`).
+
+`ctx/c1_full`: 2 seed(s) died before update 2,000 and are excluded from the mean (`ctx_c1_full_seed0`, `ctx_c1_full_seed1`).
+
+`ctx/c2`: 2 seed(s) died before update 2,000 and are excluded from the mean (`ctx_c2_seed0`, `ctx_c2_seed1`).
 
 **ctx/c2 -- what it settled.** Not a test of C2. beta was initialised at -6, where the softplus gradient is sigma(-6) = 0.0025; over the whole run beta moved by a measured 0.00012 against a predicted 0.000100, so the relevance gate never opened and this rung is C1 with an inert head attached. The rerun is ctx2/c2.
 
-`ctx/fusion_gated`: 2 seed(s) died before update 2,000 and are excluded from the mean (`ctx_fusion_gated_seed1`, `ctx_fusion_gated_seed2`).
+`ctx/fusion_gated`: 3 seed(s) died before update 2,000 and are excluded from the mean (`ctx_fusion_gated_seed0`, `ctx_fusion_gated_seed1`, `ctx_fusion_gated_seed2`).
 
 **ctx/isolation_off -- what it settled.** Killed before producing anything. With C2 off, ctx_out.r is None and the guard indexed it anyway -- a TypeError that took out nine of this ladder's twenty-four tasks. The guard now holds all classes stable when r is None.
 
@@ -141,16 +155,91 @@ The rerun with beta_init -2, a 20x learning-rate multiplier on the zero-init con
 
 | experiment | dates | arch | cohort · classes | masks | seeds | val AUC | state |
 |---|---|---|---|---|---|---|---|
-| **ctx2/ct_only** | 2026-08-27 → 2026-08-28 | context | peds 7,001 · 27 | peds 100% | 3/3 | 0.7908 ±0.0013 | done |
-| **ctx2/concat** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 3/3 | 0.7854 ±0.0025 | done |
-| **ctx2/c1_xattn** | 2026-08-27 → 2026-08-28 | context | peds 7,001 · 27 | peds 100% | 3/3 | 0.7942 ±0.0024 | done |
-| **ctx2/c1_full** | 2026-08-27 → 2026-08-28 | context | peds 7,001 · 27 | peds 100% | 3/3 | 0.7940 ±0.0022 | done |
-| **ctx2/c2** | 2026-08-27 → 2026-08-28 | context | peds 7,001 · 27 | peds 100% | 3/3 | 0.7925 ±0.0028 | queued |
-| **ctx2/fusion_gated** | 2026-08-27 → 2026-08-28 | context | peds 7,001 · 27 | peds 100% | 2/3 | 0.7954 ±0.0014 | queued |
+| **ctx2/ct_only** | 2026-08-27 → 2026-08-28 | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | STALLED |
+| **ctx2/concat** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | STALLED |
+| **ctx2/c1_xattn** | 2026-08-27 → 2026-08-28 | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | STALLED |
+| **ctx2/c1_full** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | STALLED |
+| **ctx2/c2** | 2026-08-27 → 2026-08-28 | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | queued |
+| **ctx2/fusion_gated** | 2026-08-27 → 2026-08-28 | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | queued |
 | **ctx2/isolation_off** | 2026-08-27 | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | queued |
-| **ctx2/age_scalar** | 2026-08-27 → 2026-08-28 | context | peds 7,001 · 27 | peds 100% | 3/3 | 0.7957 ±0.0017 | queued |
+| **ctx2/age_scalar** | 2026-08-27 → 2026-08-28 | context | peds 7,001 · 27 | peds 100% | 0/3 | -- | queued |
+
+Held-out evaluation:
+
+| experiment | cell | n | classes | global AUC | 95% CI | routed AUC | Δ routed |
+|---|---|---|---|---|---|---|---|
+| ctx2/ct_only | `peds_ctx2/ct_only_seed0` | 1760 | 27 | 0.7905 | 0.7710–0.8028 | 0.7614 | -0.0291 |
+| ctx2/ct_only | `peds_ctx2/ct_only_seed1` | 1760 | 27 | 0.7921 | 0.7730–0.8053 | 0.7622 | -0.0300 |
+| ctx2/ct_only | `peds_ctx2/ct_only_seed2` | 1760 | 27 | 0.7898 | 0.7702–0.8012 | 0.7601 | -0.0297 |
+| ctx2/c1_xattn | `peds_ctx2/c1_xattn_seed0` | 1760 | 27 | 0.7962 | 0.7783–0.8073 | 0.7599 | -0.0363 |
+| ctx2/c1_xattn | `peds_ctx2/c1_xattn_seed1` | 1760 | 27 | 0.7916 | 0.7738–0.8030 | 0.7561 | -0.0355 |
+| ctx2/c1_xattn | `peds_ctx2/c1_xattn_seed2` | 1760 | 27 | 0.7950 | 0.7774–0.8045 | 0.7600 | -0.0350 |
+| ctx2/c1_full | `peds_ctx2/c1_full_seed0` | 1760 | 27 | 0.7959 | 0.7781–0.8064 | 0.7597 | -0.0361 |
+| ctx2/c1_full | `peds_ctx2/c1_full_seed1` | 1760 | 27 | 0.7916 | 0.7745–0.8028 | 0.7554 | -0.0362 |
+| ctx2/c1_full | `peds_ctx2/c1_full_seed2` | 1760 | 27 | 0.7943 | 0.7754–0.8049 | 0.7614 | -0.0329 |
+| ctx2/c2 | `peds_ctx2/c2_seed0` | 1760 | 27 | 0.7917 | 0.7738–0.8037 | 0.7613 | -0.0304 |
+| ctx2/c2 | `peds_ctx2/c2_seed1` | 1760 | 27 | 0.7900 | 0.7704–0.8035 | 0.7605 | -0.0295 |
+| ctx2/c2 | `peds_ctx2/c2_seed2` | 1760 | 27 | 0.7955 | 0.7774–0.8053 | 0.7616 | -0.0339 |
+| ctx2/fusion_gated | `peds_ctx2/fusion_gated_seed0` | 1760 | 27 | 0.7931 | 0.7744–0.8040 | 0.7600 | -0.0331 |
+| ctx2/fusion_gated | `peds_ctx2/fusion_gated_seed1` | 1760 | 27 | 0.7943 | 0.7750–0.8060 | 0.7609 | -0.0334 |
+| ctx2/fusion_gated | `peds_ctx2/fusion_gated_seed2` | 1760 | 27 | 0.7965 | 0.7781–0.8067 | 0.7617 | -0.0348 |
+| ctx2/age_scalar | `peds_ctx2/age_scalar_seed0` | 1760 | 27 | 0.7965 | 0.7786–0.8073 | 0.7601 | -0.0364 |
+| ctx2/age_scalar | `peds_ctx2/age_scalar_seed0_ind_none` | -- | -- | -- | -- | -- | -- |
+| ctx2/age_scalar | `peds_ctx2/age_scalar_seed0_ind_none_v2` | 1760 | 27 | 0.7852 | 0.7679–0.7954 | 0.7584 | -0.0268 |
+| ctx2/age_scalar | `peds_ctx2/age_scalar_seed0_ind_shuffled` | 1760 | 27 | 0.7965 | 0.7786–0.8073 | 0.7601 | -0.0364 |
+| ctx2/age_scalar | `peds_ctx2/age_scalar_seed0_ind_shuffled_v2` | 1760 | 27 | 0.7771 | 0.7580–0.7880 | 0.7576 | -0.0195 |
+| ctx2/age_scalar | `peds_ctx2/age_scalar_seed0_smoke` | 8 | 27 | 0.7760 | 0.5555–0.8439 | 0.7280 | -0.0480 |
+| ctx2/age_scalar | `peds_ctx2/age_scalar_seed1` | 1760 | 27 | 0.7937 | 0.7740–0.8068 | 0.7620 | -0.0317 |
+| ctx2/age_scalar | `peds_ctx2/age_scalar_seed1_ind_none` | 1760 | 27 | 0.7937 | 0.7740–0.8068 | 0.7620 | -0.0317 |
+| ctx2/age_scalar | `peds_ctx2/age_scalar_seed1_ind_none_v2` | 1760 | 27 | 0.7798 | 0.7599–0.7925 | 0.7601 | -0.0197 |
+| ctx2/age_scalar | `peds_ctx2/age_scalar_seed1_ind_shuffled` | 1760 | 27 | 0.7937 | 0.7740–0.8068 | 0.7620 | -0.0317 |
+| ctx2/age_scalar | `peds_ctx2/age_scalar_seed1_ind_shuffled_v2` | 1760 | 27 | 0.7696 | 0.7480–0.7829 | 0.7582 | -0.0115 |
+| ctx2/age_scalar | `peds_ctx2/age_scalar_seed2` | 1760 | 27 | 0.7968 | 0.7780–0.8075 | 0.7636 | -0.0333 |
+| ctx2/age_scalar | `peds_ctx2/age_scalar_seed2_ind_none` | 1760 | 27 | 0.7968 | 0.7780–0.8075 | 0.7636 | -0.0333 |
+| ctx2/age_scalar | `peds_ctx2/age_scalar_seed2_ind_none_v2` | 1760 | 27 | 0.7867 | 0.7684–0.7967 | 0.7620 | -0.0247 |
+| ctx2/age_scalar | `peds_ctx2/age_scalar_seed2_ind_shuffled` | 1760 | 27 | 0.7968 | 0.7780–0.8075 | 0.7636 | -0.0333 |
+| ctx2/age_scalar | `peds_ctx2/age_scalar_seed2_ind_shuffled_v2` | 1760 | 27 | 0.7808 | 0.7620–0.7906 | 0.7616 | -0.0193 |
+
+`ctx2/ct_only`: 3 seed(s) died before update 3,200 and are excluded from the mean (`ctx2_ct_only_seed0`, `ctx2_ct_only_seed1`, `ctx2_ct_only_seed2`).
 
 **ctx2/ct_only -- what it settled.** The architecture-only control: the context model with the Q-Former's context path switched off, so it is the published model under the new code path. Every other rung is a delta against this, not against V1.
+
+`ctx2/concat`: 3 seed(s) died before update 3,200 and are excluded from the mean (`ctx2_concat_seed0`, `ctx2_concat_seed1`, `ctx2_concat_seed2`).
+
+`ctx2/c1_xattn`: 3 seed(s) died before update 3,200 and are excluded from the mean (`ctx2_c1_xattn_seed0`, `ctx2_c1_xattn_seed1`, `ctx2_c1_xattn_seed2`).
+
+`ctx2/c1_full`: 3 seed(s) died before update 3,200 and are excluded from the mean (`ctx2_c1_full_seed0`, `ctx2_c1_full_seed1`, `ctx2_c1_full_seed2`).
+
+`ctx2/c2`: 3 seed(s) died before update 3,200 and are excluded from the mean (`ctx2_c2_seed0`, `ctx2_c2_seed1`, `ctx2_c2_seed2`).
+
+`ctx2/fusion_gated`: 3 seed(s) died before update 3,200 and are excluded from the mean (`ctx2_fusion_gated_seed0`, `ctx2_fusion_gated_seed1`, `ctx2_fusion_gated_seed2`).
+
+`ctx2/age_scalar`: 3 seed(s) died before update 3,200 and are excluded from the mean (`ctx2_age_scalar_seed0`, `ctx2_age_scalar_seed1`, `ctx2_age_scalar_seed2`).
+
+## Pathology-specific context read-out rescue (ctx4)
+
+Pediatric-only exploratory rescue after ctx2. It reads the already supervised class-specific conditioned pathology tokens directly, freezes the inherited ARC-CT path, and learns zero-start per-class residual gates. This is not the reserved ctx3 masked-joint experiment and is not a replacement for the canonical C1+C2 Phase-1 result.
+
+| experiment | dates | arch | cohort · classes | masks | seeds | val AUC | state |
+|---|---|---|---|---|---|---|---|
+| **ctx4/classlogit_c1_gatewarm** | -- | context | peds 7,001 · 27 (headline measurable 23) | peds 100% | 0/3 | -- | queued |
+| **ctx4/classlogit_c2_gatewarm** | -- | context | peds 7,001 · 27 (headline measurable 23) | peds 100% | 0/3 | -- | queued |
+| **ctx4/classlogit_c1_gatewarm_ind2** | -- | context | peds 7,001 · 27 (headline measurable 23) | peds 100% | 0/3 | -- | queued |
+| **ctx4/classlogit_c2_gatewarm_safe** | -- | context | peds 7,001 · 27 (headline measurable 23) | peds 100% | 0/3 | -- | queued |
+| **ctx4/smoke_trainedbase** | 2026-08-31 | context | peds smoke 40/32 · 27 | peds 100% | 0/1 | -- | RUNNING |
+| **ctx4/pilots_invalid** | 2026-08-31 | context | peds 7,001 · 27 | peds 100% | 0/13 | -- | RUNNING |
+
+**ctx4/classlogit_c1_gatewarm -- what it settled.** Exploratory direct R2 read-out. Conditioned pathology tokens train for 400 updates while their prediction gates remain exactly zero; only then may they alter the frozen ARC-CT class margins.
+
+**ctx4/classlogit_c2_gatewarm -- what it settled.** The same direct R2 read-out with the documented non-suppressing C2 relevance mechanism active.
+
+**ctx4/classlogit_c1_gatewarm_ind2 -- what it settled.** Controlled strength ablation: doubles conditioned-token supervision from 1.0 to 2.0 without forcing the zero-start prediction gates open.
+
+**ctx4/classlogit_c2_gatewarm_safe -- what it settled.** Documentation-conformant safety control for the rescue read-out: C1+C2, ordinal age bands, 30% indication dropout and prediction-level counterfactual consistency. It separates a defensible metadata gain from an efficacy-only gain obtained by removing shortcut controls.
+
+**ctx4/smoke_trainedbase -- what it settled.** Two-update integration test using the trained seed-0 CT-only checkpoint; completed at 0.8133 on a non-reportable 32-volume smoke subset.
+
+**ctx4/pilots_invalid -- what it settled.** Invalid/smoke artifacts retained for audit only. They are not result runs: the first pilot opened gates before token warmup, and the ctx3 prefix conflicted with the reserved masked-joint generation.
 
 ## Joint context runs (the headline)
 
@@ -169,8 +258,20 @@ The run that has to clear 0.8574 on the 18 classes CT-RATE publishes. No pediatr
 
 | experiment | dates | arch | cohort · classes | masks | seeds | val AUC | state |
 |---|---|---|---|---|---|---|---|
-| **ctrate/ct_only** | -- | ARC-CT | CT-RATE 42,544 · 18 (published) | CT-RATE, gated at 99% | 0/3 | -- | queued |
-| **ctrate/c2** | -- | context | CT-RATE 42,544 · 18 (published) | CT-RATE, gated at 99% | 0/3 | -- | queued |
+| **ctrate/ct_only** | 2026-08-28 → 2026-08-29 | ARC-CT | CT-RATE 42,544 · 18 (published) | CT-RATE, gated at 99% | 3/3 | 0.8748 ±0.0003 | queued |
+| **ctrate/c2** | 2026-08-29 → 2026-08-30 | context | CT-RATE 42,544 · 18 (published) | CT-RATE, gated at 99% | 3/3 | 0.8751 ±0.0003 | queued |
+
+Held-out evaluation:
+
+| experiment | cell | n | classes | global AUC | 95% CI | routed AUC | Δ routed |
+|---|---|---|---|---|---|---|---|
+| ctrate/ct_only | `ctrate18/ct_only_seed0` | 3002 | 18 | 0.8465 | 0.8389–0.8543 | 0.8208 | -0.0257 |
+| ctrate/ct_only | `ctrate18/ct_only_seed1` | 3002 | 18 | 0.8485 | 0.8413–0.8562 | 0.8205 | -0.0280 |
+| ctrate/ct_only | `ctrate18/ct_only_seed2` | 3002 | 18 | 0.8473 | 0.8401–0.8550 | 0.8203 | -0.0270 |
+| ctrate/c2 | `ctrate18/c2_seed0` | 3002 | 18 | 0.8468 | 0.8396–0.8544 | 0.8182 | -0.0286 |
+| ctrate/c2 | `ctrate18/c2_seed0_smoke` | 8 | 18 | 0.9375 | 0.9099–0.9932 | 0.9602 | +0.0227 |
+| ctrate/c2 | `ctrate18/c2_seed1` | 3002 | 18 | 0.8463 | 0.8389–0.8539 | 0.8194 | -0.0269 |
+| ctrate/c2 | `ctrate18/c2_seed2` | 3002 | 18 | 0.8491 | 0.8417–0.8569 | 0.8194 | -0.0297 |
 
 **ctrate/ct_only -- what it settled.** The control, and it is not a formality: it must come back near the published checkpoint's own 0.8547 for the context arm's delta to mean anything.
 
@@ -199,6 +300,8 @@ The winner rerun with anatomy masks on the adult half too. Held separate from th
 ## Journal
 
 Dated record of what happened and what it changed. Newest first.
+
+**2026-08-31 — Direct class read-out rescue requires staged gates and its own generation**  A pathology-specific class-logit pilot opened zero-start prediction gates while the conditioned tokens were still learning, collapsing update-200 validation AUC to about 0.732. A 400-update token-only phase now holds the gates exactly closed. The rescue was renamed ctx4 because ctx3 is reserved for the documented masked joint ablation. It remains exploratory: the original launcher also froze arcct_seed0.peds27.pt, which is the schema- surgery starting point (about 0.731 AUC), rather than a trained pediatric baseline. The corrected launcher now warm-starts each arm from the seed-matched ctx2/ct_only best checkpoint. The pediatric headline is measurable-23 rather than all 27 classes.
 
 **2026-08-28 — A sync loop emptied the context config, and the identity gate passed anyway**  configs/stage2_ctrate_ctx.env was zero bytes and had been committed that way: a loop meant to copy it into the second pipeline tree resolved to the file itself, and a redirect onto its own source truncates it. The gate passed on the empty file, because a missing env file does not fail -- it leaves the code defaults, and those are beta_init = -6.0 and lr_mult = 1.0, exactly the two settings that made the first pediatric ladder measure nothing. Six runs would have spent three days reproducing that with nothing objecting, since every individual default is legal. The launcher now rejects an empty variable and those two values by name.
 

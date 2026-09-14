@@ -34,6 +34,7 @@ from typing import NamedTuple
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from arcct.anatomy_qformer import AnatomyQFormer, build_role_mask
 from arcct.conditioning import QueryConditioner
@@ -120,7 +121,9 @@ class ContextQFormer(AnatomyQFormer):
 
         self.context = context or ContextEncoder(dim=dim, bert=bert)
         self.conditioner = QueryConditioner(dim=dim, num_heads=num_heads,
-                                            film_eps=self.cfg.film_eps, dropout=dropout)
+                                            film_eps=self.cfg.film_eps, dropout=dropout,
+                                            use_xattn=self.cfg.xattn,
+                                            use_film=self.cfg.film)
         self.relevance = RelevanceHead(dim=dim, n_classes=L.n_path,
                                        beta_init=self.cfg.beta_init)
 
@@ -138,6 +141,25 @@ class ContextQFormer(AnatomyQFormer):
         self.gate_norm = nn.LayerNorm(dim)
         nn.init.zeros_(self.gate_mlp.weight)
         nn.init.zeros_(self.gate_mlp.bias)
+
+        # A single pooled Z_ind asks one vector to improve all pathologies at
+        # once. The completed pediatric ladder showed large class-specific
+        # gains and losses that canceled in the macro average, so the refined
+        # arm learns one bounded residual gate per pathology. tanh(0)=0 keeps
+        # the initial predictions exactly equal to the inherited CT-only path.
+        self.class_gate_scale = nn.Parameter(torch.zeros(L.n_path))
+
+        # Optional supervised readout transferred from the independent CT-RATE
+        # implementation.  It is deliberately a parallel branch: enabling it
+        # cannot change the existing prompt/class-residual predictions.  The
+        # LayerNorm makes the differently scaled general and conditioned pools
+        # safe to concatenate, and the linear layer emits one logit per class.
+        self.ctx_classifier = None
+        if self.cfg.ctx_cls:
+            self.ctx_classifier = nn.Sequential(
+                nn.LayerNorm(2 * dim),
+                nn.Linear(2 * dim, L.n_path),
+            )
 
         self.last_role_stats: dict[str, torch.Tensor] | None = None
 
@@ -217,8 +239,15 @@ class ContextQFormer(AnatomyQFormer):
         age_years: torch.Tensor | None = None,
         return_parts: bool = False,
     ):
-        if return_attn:
-            raise NotImplementedError("return_attn is not wired for the context bank")
+        """Run the metadata-conditioned query bank.
+
+        When ``return_attn`` is true, the final-block image cross-attention is
+        returned after the normal output.  Its shape is ``(B, heads, slots,
+        Dp*Hp*Wp)``.  In particular, ``return_parts=True, return_attn=True``
+        returns ``(ContextOutput, attention)``.  This keeps the ordinary
+        training/evaluation path unchanged while allowing faithful qualitative
+        visualization of both the general and conditioned pathology slots.
+        """
         L = self.layout
         B = feat_map.shape[0]
 
@@ -270,10 +299,16 @@ class ContextQFormer(AnatomyQFormer):
             split, gmask = L.n_gen, None
         else:
             split, gmask = None, self.group_self_attn_mask
-        z_gen, tokens = self.qformer(
+        qformer_out = self.qformer(
             feat_map, cross_attn_mask=attn_mask, queries=q,
             self_attn_split=split, self_attn_mask=gmask,
-            pool_index=self.gen_index, return_tokens=True)
+            pool_index=self.gen_index, return_tokens=True,
+            return_attn=return_attn)
+        if return_attn:
+            z_gen, tokens, last_attn = qformer_out
+        else:
+            z_gen, tokens = qformer_out
+            last_attn = None
 
         # -- the conditioned pool -------------------------------------------
         z_c = tokens.index_select(1, self.path_cond_index)               # (B, C, D)
@@ -288,8 +323,17 @@ class ContextQFormer(AnatomyQFormer):
         # the ||W_ind|| / ||W_gen|| training diagnostic is only readable if the
         # two halves of the fusion input are comparably scaled.
         z_ind = 0.5 * (z_pool + z_clin) if self.cfg.zind_combine == "mean" else (z_pool + z_clin)
+        if self.cfg.naive_fusion:
+            # Controlled late-fusion baseline: bypass C1/C2 and concatenate the
+            # pooled clinical context directly with the general image latent.
+            z_ind = QueryConditioner._masked_mean(
+                context.H_C, context.key_padding_mask).to(z_gen.dtype)
 
-        if self.cfg.fusion == "gated":
+        if self.cfg.fusion == "class_logit":
+            # class_prompt_probs() performs the metadata correction. The
+            # shared image/report latent stays on the inherited pathway.
+            z_final = z_gen
+        elif self.cfg.fusion == "gated":
             g = self.gate_scale * torch.sigmoid(self.gate_mlp(context.e_ind.to(z_ind.dtype)))
             z_final = self.gate_norm(z_gen + g * z_ind)
         else:
@@ -300,9 +344,50 @@ class ContextQFormer(AnatomyQFormer):
                                "through the zero fusion block (0 * NaN = NaN)")
 
         if return_parts:
-            return ContextOutput(z_final=z_final, z_gen=z_gen, z_ind=z_ind,
-                                 tokens=tokens, r=r, w=w,
-                                 rho=stats["rho"], empty=stats["empty"])
+            parts = ContextOutput(z_final=z_final, z_gen=z_gen, z_ind=z_ind,
+                                  tokens=tokens, r=r, w=w,
+                                  rho=stats["rho"], empty=stats["empty"])
+            return (parts, last_attn) if return_attn else parts
+        if return_attn and return_tokens:
+            return z_final, tokens, last_attn
+        if return_attn:
+            return z_final, last_attn
         if return_tokens:
             return z_final, tokens
         return z_final
+
+    def class_prompt_probs(
+        self,
+        out: ContextOutput,
+        pos_embs: torch.Tensor,
+        neg_embs: torch.Tensor,
+        temperature: float | torch.Tensor,
+        normalize: bool = True,
+    ) -> torch.Tensor:
+        """Return prompt probabilities with a per-class context residual.
+
+        The global CT prompt margin is the immutable reference. Each
+        indication-conditioned pathology token proposes a class-specific
+        margin, and C2 relevance modulates a zero-start learned gate. Thus the
+        method is exactly CT-only when the gate is zero but can retain context
+        gains without forcing unrelated pathologies through one pooled vector.
+        """
+        z_gen = out.z_gen
+        z_cond = out.tokens.index_select(1, self.path_cond_index)
+        if normalize:
+            z_gen = F.normalize(z_gen, dim=-1)
+            z_cond = F.normalize(z_cond, dim=-1)
+        margin_gen = z_gen @ pos_embs.T - z_gen @ neg_embs.T
+        margin_cond = ((z_cond * pos_embs.unsqueeze(0)).sum(dim=-1)
+                       - (z_cond * neg_embs.unsqueeze(0)).sum(dim=-1))
+        alpha = torch.tanh(self.class_gate_scale).unsqueeze(0)
+        if out.r is not None:
+            alpha = alpha * out.r.to(alpha.dtype)
+        margin = margin_gen + alpha * (margin_cond - margin_gen)
+        return torch.sigmoid(margin / temperature)
+
+    def ctx_cls_logits(self, out: ContextOutput) -> torch.Tensor:
+        """Supervised logits from the general and metadata-aware pools."""
+        if self.ctx_classifier is None:
+            raise RuntimeError("ctx_cls head is disabled; set RAC_CTX_CLS=1")
+        return self.ctx_classifier(torch.cat([out.z_gen, out.z_ind], dim=-1))

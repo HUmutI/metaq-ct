@@ -36,6 +36,7 @@ RUNS = (
     ("comb16k", "train_comb16k_*.out"),
     ("comb47k", "train_comb47k_*.out"),
     ("c47harm", "train_c47harm_*.out"),
+    ("ctrctx", "ctrctx_*.out"),
 )
 
 
@@ -82,9 +83,12 @@ def main() -> int:
 
     jobs = squeue()
     byname = Counter(j[1] for j in jobs)
+    running_byname = Counter(j[1] for j in jobs if j[2] in ("R", "CG"))
     print("\n[jobs] " + (", ".join("%s x%d" % (k, v) for k, v in byname.items()) or "none"))
     # the colleague's fetch runs under a different account; report it if visible
     theirs = squeue("ch278452")
+    theirs_running = [j for j in theirs if j[2] in ("R", "CG")]
+    theirs_byname = Counter(j[1] for j in theirs_running)
     if theirs:
         print("[jobs] ch278452: " + ", ".join("%s(%s)" % (j[1], j[2]) for j in theirs))
 
@@ -148,7 +152,9 @@ def main() -> int:
         cur[key] = n
         was = prev.get(key)
         dt = (now - prev.get("t", now)) / 60 if prev else 0
-        running = byname.get(jobname, 0) or (jobname == "ctfetch" and theirs)
+        running = running_byname.get(jobname, 0) or (
+            jobname == "ctfetch" and theirs_byname.get("ctfetch", 0)
+        )
         delta = "" if was is None else "  (+%d in %.0f min)" % (n - was, dt)
         print("  %-14s %7d / %-7d%s" % (key, n, tgt, delta))
         if running and was is not None and n == was and dt >= STALL_MIN and n < tgt:
@@ -189,7 +195,7 @@ def main() -> int:
             dt = (now - prev.get("t", now)) / 60 if prev else 0
             d = "" if was is None else "  (+%d in %.0f min)" % (cu - was, dt)
             print("  step %d / %d%s" % (cu, tot, d))
-            if byname.get(jobname, 0) and was is not None and cu == was and dt >= STALL_MIN:
+            if running_byname.get(jobname, 0) and was is not None and cu == was and dt >= STALL_MIN:
                 bad("%s: RUNNING ama adim %d'de %.0f dk takili" % (jobname, cu, dt))
         else:
             print("  (henuz adim yok - model yukleniyor)")

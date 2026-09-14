@@ -76,9 +76,13 @@ rc=$?
 # cannot disagree with the pooled numbers. Pediatric-only for now: CT-RATE has
 # 7 volumes under 18 out of 47,137, so an age breakdown there is a single group.
 if [ "$rc" = "0" ] && [ "$SET" != "ctrate" ]; then
+  age_ci=()
+  if [ "${EVAL_AGE_CI:-1}" = 1 ]; then
+    age_ci=(--ci)
+  fi
   $E/bin/python $ARCCT_ROOT/tools/age_stratified_eval.py \
       --pred "$EVAL_RESULTS_DIR/predictions.npz" \
-      --csv  "$EVAL_RESULTS_DIR/auc_by_age.csv" --ci \
+      --csv  "$EVAL_RESULTS_DIR/auc_by_age.csv" "${age_ci[@]}" \
       | tee "$EVAL_RESULTS_DIR/auc_by_age.txt"
 fi
 exit $rc

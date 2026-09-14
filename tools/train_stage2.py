@@ -50,7 +50,12 @@ from arcct.image_encoder import RACImageEncoder, load_from_stage1  # noqa: E402
 from arcct.ct_clip import CTCLIP  # noqa: E402
 from arcct.qformer import QFormer
 from arcct.context import NO_INDICATION
-from arcct.context_qformer import ContextQFormer
+from arcct.context_qformer import ContextOutput, ContextQFormer
+from arcct.imbalance_losses import (
+    batch_nuclear_norm_loss,
+    masked_asymmetric_loss_from_logits,
+    masked_asymmetric_loss_from_probs,
+)
 from arcct.relevance import RelevanceHead
 from arcct.slots import CtxConfig, SlotLayout  # noqa: E402
 from arcct.anatomy_qformer import AnatomyQFormer, build_role_mask  # noqa: E402
@@ -78,6 +83,7 @@ ACCUM_STEPS = int(os.environ.get("RAC_ACCUM_STEPS", "8"))
 TOTAL_UPDATES = int(os.environ.get("RAC_TOTAL_UPDATES", os.environ.get("RAC_TOTAL_STEPS", "6000")))
 WARMUP_UPDATES = int(os.environ.get("RAC_WARMUP_UPDATES", os.environ.get("RAC_WARMUP_STEPS", "500")))
 SAVE_EVERY = int(os.environ.get("RAC_SAVE_EVERY", "500"))
+KEEP_NUMBERED_CKPTS = max(1, int(os.environ.get("RAC_KEEP_NUMBERED_CKPTS", "1")))
 VAL_EVERY = int(os.environ.get("RAC_VAL_EVERY", "500"))
 PROMPT_CACHE_EVERY = int(os.environ.get("RAC_PROMPT_CACHE_EVERY", "50"))
 
@@ -93,6 +99,11 @@ WEIGHT_DECAY = float(os.environ.get("RAC_WEIGHT_DECAY", "1e-4"))
 TEXT_WEIGHT_DECAY = float(os.environ.get("RAC_TEXT_WEIGHT_DECAY", "1e-3"))
 MAX_GRAD_NORM = float(os.environ.get("RAC_MAX_GRAD_NORM", "0.5"))
 TEMPERATURE = float(os.environ.get("RAC_TEMPERATURE", "0.07"))
+PROMPT_NEGATIVE = os.environ.get("RAC_PROMPT_NEGATIVE", "standard").strip().lower()
+if PROMPT_NEGATIVE not in ("standard", "null", "empty"):
+    raise ValueError("RAC_PROMPT_NEGATIVE must be standard|null|empty")
+NO_L2_CLIP = os.environ.get("RAC_NO_L2_CLIP", "0") == "1"
+NO_L2_PROMPT = os.environ.get("RAC_NO_L2_PROMPT", "0") == "1"
 
 # MD row 4.2: learnable temperature (CLIP-style log_logit_scale).
 # When enabled, init to log(1/TEMPERATURE), clamp max so τ stays >= 1/100 = 0.01.
@@ -206,6 +217,34 @@ LM_MAX_LEN = int(os.environ.get("RAC_LM_MAX_LEN", "128"))
 CTX_CFG = CtxConfig.from_env()
 USE_CONTEXT_QFORMER = CTX_CFG.enabled
 CTX_PTOK_WEIGHT = CTX_CFG.ptok_weight
+CTX_SEPARATE_IND_LOSS = os.environ.get("RAC_CTX_SEPARATE_IND_LOSS", "0") == "1"
+CTX_IND_WEIGHT = float(os.environ.get("RAC_CTX_W_IND", "0.0"))
+CTX_WEIGHT_DECAY = float(os.environ.get("RAC_CTX_WEIGHT_DECAY", str(WEIGHT_DECAY)))
+CTX_ANATOMY_QUERIES = os.environ.get("RAC_CTX_ANATOMY_QUERIES", "1") == "1"
+SUPPRESS_ROUTING_MASK = os.environ.get("RAC_SUPPRESS_ROUTING_MASK", "0") == "1"
+METADATA_MODE = os.environ.get("RAC_METADATA_MODE", "all").strip().lower()
+if METADATA_MODE not in ("all", "indication", "demographics", "none"):
+    raise ValueError(
+        "RAC_METADATA_MODE must be all|indication|demographics|none")
+CTX_FREEZE_BASE = (os.environ.get("RAC_CTX_FREEZE_BASE", "0") == "1"
+                   and USE_CONTEXT_QFORMER)
+CTX_CLASS_GATE_WARMUP = int(os.environ.get("RAC_CTX_CLASS_GATE_WARMUP", "0"))
+CTX_CLS_WEIGHT = float(os.environ.get("RAC_CTX_CLS_WEIGHT", "1.0"))
+CTX_CLS_HEAD_ONLY = (os.environ.get("RAC_CTX_CLS_HEAD_ONLY", "0") == "1")
+STAGE2_CLS_LOSS = os.environ.get("RAC_STAGE2_CLS_LOSS", "bce").strip().lower()
+if STAGE2_CLS_LOSS not in ("bce", "asl"):
+    raise ValueError("RAC_STAGE2_CLS_LOSS must be bce|asl")
+ASL_GAMMA_NEG = float(os.environ.get("RAC_ASL_GAMMA_NEG", "4.0"))
+ASL_GAMMA_POS = float(os.environ.get("RAC_ASL_GAMMA_POS", "1.0"))
+ASL_CLIP = float(os.environ.get("RAC_ASL_CLIP", "0.05"))
+BNM_WEIGHT = float(os.environ.get("RAC_BNM_WEIGHT", "0.0"))
+if BNM_WEIGHT < 0:
+    raise ValueError("RAC_BNM_WEIGHT must be non-negative")
+VAL_SELECTION = os.environ.get(
+    "RAC_VAL_SELECTION", "ctx_cls" if CTX_CFG.ctx_cls else "conditioned"
+).strip().lower()
+if VAL_SELECTION not in ("conditioned", "general", "ctx_cls"):
+    raise ValueError("RAC_VAL_SELECTION must be conditioned, general, or ctx_cls")
 CF_WEIGHT = float(os.environ.get("RAC_CF_WEIGHT", "0.5"))
 CF_TAU = float(os.environ.get("RAC_CF_TAU", "0.5"))
 CF_MAX_ROWS = int(os.environ.get("RAC_CF_MAX_ROWS", "6"))
@@ -295,6 +334,9 @@ def build_model():
 def configure_trainable(clip):
     for p in clip.parameters():
         p.requires_grad = False
+    if CTX_FREEZE_BASE:
+        print("[RAC] Context refinement: inherited CTCLIP base FROZEN")
+        return [], []
     for p in clip.visual_transformer.parameters():
         p.requires_grad = True
     for p in clip.to_visual_latent.parameters():
@@ -332,11 +374,16 @@ def configure_trainable(clip):
 @torch.no_grad()
 def encode_prompts(clip, tokenizer, device):
     pos = tokenizer([f"{p}." for p in PATHOLOGIES], return_tensors="pt", padding="max_length", truncation=True, max_length=PROMPT_LEN).to(device)
-    neg = tokenizer([f"No {p}." for p in PATHOLOGIES], return_tensors="pt", padding="max_length", truncation=True, max_length=PROMPT_LEN).to(device)
+    neg_text = ([""] * len(PATHOLOGIES) if PROMPT_NEGATIVE in ("null", "empty")
+                else [f"No {p}." for p in PATHOLOGIES])
+    neg = tokenizer(neg_text, return_tensors="pt", padding="max_length", truncation=True, max_length=PROMPT_LEN).to(device)
     out_pos = clip.text_transformer(pos["input_ids"], pos["attention_mask"])
     out_neg = clip.text_transformer(neg["input_ids"], neg["attention_mask"])
-    pos_embs = F.normalize(clip.to_text_latent(out_pos[0][:, 0, :]), dim=-1)
-    neg_embs = F.normalize(clip.to_text_latent(out_neg[0][:, 0, :]), dim=-1)
+    pos_embs = clip.to_text_latent(out_pos[0][:, 0, :])
+    neg_embs = clip.to_text_latent(out_neg[0][:, 0, :])
+    if not NO_L2_PROMPT:
+        pos_embs = F.normalize(pos_embs, dim=-1)
+        neg_embs = F.normalize(neg_embs, dim=-1)
     return pos_embs, neg_embs
 
 
@@ -361,8 +408,9 @@ def encode_token_pack(clip, token_pack, device):
 
 def soft_clip_infonce(img_lat, txt_lat, labels, temperature=TEMPERATURE, fn_weight=FN_WEIGHT):
     B = img_lat.size(0)
-    img_lat = F.normalize(img_lat, dim=-1)
-    txt_lat = F.normalize(txt_lat, dim=-1)
+    if not NO_L2_CLIP:
+        img_lat = F.normalize(img_lat, dim=-1)
+        txt_lat = F.normalize(txt_lat, dim=-1)
     logits = img_lat @ txt_lat.T / temperature
     # Unlabeled cells (NaN) count as "not asserted positive" here, not as a
     # negative. This is a soft-POSITIVE weight over the CLIP target, so an
@@ -382,7 +430,8 @@ def soft_clip_infonce(img_lat, txt_lat, labels, temperature=TEMPERATURE, fn_weig
 
 
 def prompt_probs(img_lat, pos_embs, neg_embs, temperature=TEMPERATURE):
-    img_lat = F.normalize(img_lat, dim=-1)
+    if not NO_L2_PROMPT:
+        img_lat = F.normalize(img_lat, dim=-1)
     sims_pos = img_lat @ pos_embs.T
     sims_neg = img_lat @ neg_embs.T
     stacked = torch.stack([sims_pos, sims_neg], dim=-1) / temperature
@@ -403,6 +452,103 @@ def prompt_cls_loss(img_lat, pos_embs, neg_embs, labels, temperature=TEMPERATURE
         per = F.binary_cross_entropy(probs, torch.nan_to_num(tgt, nan=0.0),
                                      reduction="none")
         return (per * m).sum() / m.sum().clamp(min=1)
+
+
+def prompt_cls_loss_from_probs(probs, labels):
+    """The masked BCE tail shared by global and class-residual prompt heads."""
+    with torch.cuda.amp.autocast(enabled=False):
+        probs = probs.float().clamp(1e-6, 1 - 1e-6)
+        tgt = labels.float().to(probs.device)
+        m = torch.isfinite(tgt)
+        per = F.binary_cross_entropy(
+            probs, torch.nan_to_num(tgt, nan=0.0), reduction="none")
+        return (per * m).sum() / m.sum().clamp(min=1)
+
+
+def weighted_prompt_cls_loss_from_probs(probs, labels, class_weights):
+    """C2-weighted conditioned prompt BCE, normalized by ``sum(w)``.
+
+    This is Biltir's ``L_ind``.  Normalizing is essential: without it the
+    relevance scale can minimize the objective by collapsing toward its floor.
+    Unlabelled cells are excluded from both numerator and denominator.
+    """
+    with torch.cuda.amp.autocast(enabled=False):
+        probs = probs.float().clamp(1e-6, 1 - 1e-6)
+        tgt = labels.float().to(probs.device)
+        mask = torch.isfinite(tgt)
+        per = F.binary_cross_entropy(
+            probs, torch.nan_to_num(tgt, nan=0.0), reduction="none")
+        w = class_weights.float().to(probs.device) * mask
+        return ((per * w).sum(dim=-1) /
+                w.sum(dim=-1).clamp(min=1e-6)).mean()
+
+
+def stage2_prompt_cls_loss(probs, labels, class_weights=None):
+    """Select BCE (historical default) or the explicit ASL ablation."""
+    if STAGE2_CLS_LOSS == "asl":
+        return masked_asymmetric_loss_from_probs(
+            probs, labels, gamma_neg=ASL_GAMMA_NEG,
+            gamma_pos=ASL_GAMMA_POS, clip=ASL_CLIP,
+            class_weights=class_weights)
+    if class_weights is None:
+        return prompt_cls_loss_from_probs(probs, labels)
+    return weighted_prompt_cls_loss_from_probs(probs, labels, class_weights)
+
+
+def masked_bce_logits(logits, labels):
+    """Multilabel BCE over labeled cells only, for the supervised ctx head."""
+    with torch.cuda.amp.autocast(enabled=False):
+        logits = logits.float()
+        tgt = labels.float().to(logits.device)
+        m = torch.isfinite(tgt)
+        per = F.binary_cross_entropy_with_logits(
+            logits, torch.nan_to_num(tgt, nan=0.0), reduction="none")
+        return (per * m).sum() / m.sum().clamp(min=1)
+
+
+def stage2_logits_cls_loss(logits, labels):
+    if STAGE2_CLS_LOSS == "asl":
+        return masked_asymmetric_loss_from_logits(
+            logits, labels, gamma_neg=ASL_GAMMA_NEG,
+            gamma_pos=ASL_GAMMA_POS, clip=ASL_CLIP)
+    return masked_bce_logits(logits, labels)
+
+
+def context_or_global_probs(qformer_module, ctx_out, img_lat,
+                            pos_embs, neg_embs, temperature=TEMPERATURE):
+    if (qformer_module is not None and ctx_out is not None
+            and qformer_module.cfg.fusion == "class_logit"):
+        return qformer_module.class_prompt_probs(
+            ctx_out, pos_embs, neg_embs, temperature,
+            normalize=not NO_L2_PROMPT)
+    return prompt_probs(img_lat, pos_embs, neg_embs, temperature=temperature)
+
+
+def build_context_bundle(qformer_module, tokenizer, ctx, device, ctx_cfg,
+                         *, texts=None, rows=None):
+    """Build a context bundle under a controlled metadata-component ablation."""
+    if rows is None:
+        age_band = ctx["age_band"].to(device)
+        sex = ctx["sex"].to(device)
+        age_years = ctx["age_years"].to(device)
+        source_texts = list(ctx["indication"] if texts is None else texts)
+    else:
+        age_band = ctx["age_band"].to(device)[rows]
+        sex = ctx["sex"].to(device)[rows]
+        age_years = ctx["age_years"].to(device)[rows]
+        source_texts = list(texts if texts is not None else
+                            [ctx["indication"][int(i)] for i in rows.tolist()])
+    if METADATA_MODE in ("demographics", "none"):
+        source_texts = [NO_INDICATION] * len(source_texts)
+    if METADATA_MODE in ("indication", "none"):
+        age_band = torch.full_like(age_band, -1)
+        sex = torch.full_like(sex, -1)
+        age_years = torch.full_like(age_years, -1.0)
+    tok = qformer_module.context.tokenize(
+        tokenizer, source_texts, ctx_cfg.max_ind_len, device)
+    return qformer_module.context(
+        tok["input_ids"], tok["attention_mask"], age_band, sex,
+        age_years=age_years, age_mode=ctx_cfg.age_mode)
 
 
 def per_class_auc(pred, true):
@@ -428,28 +574,25 @@ def run_validation(clip, tokenizer, device, val_loader, qformer_module=None,
     empty_sum = empty_n = 0.0
     for ct, _, _, labels, masks_fine, has_masks, _, ctx in tqdm.tqdm(val_loader, desc="Val-global", leave=False):
         ct = ct.to(device, non_blocking=True)
+        ctx_out = None
         with amp_context(device):
             feat_map = clip.visual_transformer.forward_spatial(ct)
             if use_context and qformer_module is not None:
                 masks_fine = masks_fine.to(device, non_blocking=True)
                 has_masks_d = has_masks.to(device, non_blocking=True)
-                tok = qformer_module.context.tokenize(
-                    tokenizer, ctx["indication"], ctx_cfg.max_ind_len, device)
-                bundle = qformer_module.context(
-                    tok["input_ids"], tok["attention_mask"],
-                    ctx["age_band"].to(device), ctx["sex"].to(device),
-                    age_years=ctx["age_years"].to(device),
-                    age_mode=ctx_cfg.age_mode)
-                out = qformer_module(feat_map, masks_fine, has_masks_d,
-                                     context=bundle, return_parts=True)
-                img_lat = out.z_final
-                if out.empty is not None:
+                bundle = build_context_bundle(
+                    qformer_module, tokenizer, ctx, device, ctx_cfg)
+                ctx_out = qformer_module(feat_map, masks_fine, has_masks_d,
+                                         context=bundle, return_parts=True,
+                                         suppress_mask=SUPPRESS_ROUTING_MASK)
+                img_lat = ctx_out.z_final
+                if ctx_out.empty is not None:
                     # A running mean over the WHOLE pass. build_role_mask's
                     # last_empty attribute is overwritten by every call, so the
                     # number the training log used to print was the last batch
                     # and nothing else.
-                    empty_sum += float(out.empty.float().sum())
-                    empty_n += float(out.empty.numel())
+                    empty_sum += float(ctx_out.empty.float().sum())
+                    empty_n += float(ctx_out.empty.numel())
                 if assert_invariance:
                     # The isolation claim, re-checked at this checkpoint rather
                     # than assumed to have survived training.
@@ -462,11 +605,12 @@ def run_validation(clip, tokenizer, device, val_loader, qformer_module=None,
                         age_years=ctx["age_years"].to(device),
                         age_mode=ctx_cfg.age_mode)
                     o2 = qformer_module(feat_map, masks_fine, has_masks_d,
-                                        context=b2, return_parts=True)
-                    if not torch.equal(out.z_gen, o2.z_gen):
+                                        context=b2, return_parts=True,
+                                        suppress_mask=SUPPRESS_ROUTING_MASK)
+                    if not torch.equal(ctx_out.z_gen, o2.z_gen):
                         raise RuntimeError(
                             "Z_gen moved with the indication: max|d|="
-                            f"{(out.z_gen - o2.z_gen).abs().max():.3e}")
+                            f"{(ctx_out.z_gen - o2.z_gen).abs().max():.3e}")
             elif qformer_module is not None:
                 if use_anatomy_qformer:
                     masks_fine = masks_fine.to(device, non_blocking=True)
@@ -477,12 +621,29 @@ def run_validation(clip, tokenizer, device, val_loader, qformer_module=None,
             else:
                 raw = clip.visual_transformer.global_pool(feat_map)
                 img_lat = clip.to_visual_latent(raw)
-            probs = prompt_probs(img_lat, pos_embs, neg_embs)
+            if (ctx_out is not None and ctx_cfg.ctx_cls
+                    and VAL_SELECTION == "ctx_cls"):
+                probs = torch.sigmoid(qformer_module.ctx_cls_logits(ctx_out))
+            elif ctx_out is not None and VAL_SELECTION == "general":
+                probs = prompt_probs(
+                    ctx_out.z_gen, pos_embs, neg_embs, temperature=TEMPERATURE)
+            else:
+                probs = context_or_global_probs(
+                    qformer_module, ctx_out, img_lat, pos_embs, neg_embs)
         all_pred.append(probs.float().cpu().numpy())
         all_true.append(labels.numpy())
     clip.train()
     if qformer_module is not None:
         qformer_module.train()
+    if CTX_FREEZE_BASE:
+        # requires_grad=False does not freeze BatchNorm running statistics.
+        # Keep every inherited feature path in eval mode after validation.
+        clip.visual_transformer.eval()
+        clip.text_transformer.eval()
+        clip.to_visual_latent.eval()
+        clip.to_text_latent.eval()
+        if qformer_module is not None:
+            qformer_module.qformer.eval()
     if empty_n:
         print(f"[RAC] empty-region rate over the whole validation pass: "
               f"{empty_sum / empty_n:.4f} ({int(empty_sum):,}/{int(empty_n):,} "
@@ -500,6 +661,8 @@ def _fusion_ratio(qformer_module) -> float:
     the conditioned half is contributing or running away. It starts at exactly 0
     -- the right block is initialised to zeros.
     """
+    if qformer_module.cfg.fusion == "class_logit":
+        return float(torch.tanh(qformer_module.class_gate_scale).abs().mean())
     W = qformer_module.fusion.weight
     d = W.shape[1] // 2
     gen = float(W[:, :d].norm())
@@ -616,10 +779,17 @@ def main():
         # draws the same numbers as the reference run. Constructing any new
         # module *before* this point shifts the stream and silently changes the
         # initial query bank.
-        anatomy_labels = list(range(1, 11))
+        anatomy_labels = list(range(1, 11)) if CTX_ANATOMY_QUERIES else []
         pathology_labels = [PATHOLOGY_FINE_ORGANS[name] for name in PATHOLOGIES]
-        ctx_layout = SlotLayout.phase1(n_path=len(pathology_labels),
-                                       n_anatomy=len(anatomy_labels))
+        n_glob_gen = QFORMER_NUM_QUERIES - len(anatomy_labels) - len(pathology_labels)
+        if n_glob_gen < 1:
+            raise RuntimeError(
+                f"RAC_QFORMER_QUERIES={QFORMER_NUM_QUERIES} leaves "
+                f"{n_glob_gen} global queries after {len(anatomy_labels)} anatomy "
+                f"and {len(pathology_labels)} pathology queries; need at least one")
+        ctx_layout = SlotLayout.phase1(
+            n_path=len(pathology_labels), n_anatomy=len(anatomy_labels),
+            n_glob_gen=n_glob_gen)
         if QFORMER_NUM_QUERIES != ctx_layout.n_gen:
             raise RuntimeError(
                 f"RAC_QFORMER_QUERIES={QFORMER_NUM_QUERIES} but the unconditioned "
@@ -633,8 +803,12 @@ def main():
             image_dim=RACImageEncoder.FEAT_DIM,
         ).to(device)
         print(f"[RAC] Context Q-Former ENABLED: {ctx_layout.describe()} "
-              f"c1={CTX_CFG.c1} c2={CTX_CFG.c2} selfattn={CTX_CFG.selfattn} "
-              f"zind={CTX_CFG.zind_combine} dropout={CTX_CFG.ind_dropout}")
+              f"c1={CTX_CFG.c1} c2={CTX_CFG.c2} xattn={CTX_CFG.xattn} "
+              f"film={CTX_CFG.film} naive={CTX_CFG.naive_fusion} selfattn={CTX_CFG.selfattn} "
+              f"zind={CTX_CFG.zind_combine} dropout={CTX_CFG.ind_dropout} "
+              f"ctx_cls={CTX_CFG.ctx_cls} anatomy_queries={len(anatomy_labels)} "
+              f"routing={'off' if SUPPRESS_ROUTING_MASK else 'on'} "
+              f"metadata={METADATA_MODE}")
     elif USE_QFORMER or USE_ANATOMY_QFORMER:
         if USE_ANATOMY_QFORMER:
             # Map FINE_LABEL_NAMES ids 1..10 onto the anatomy queries; the
@@ -669,8 +843,7 @@ def main():
     ctx_params: list = []
     if qformer_module is not None:
         for p in qformer_module.parameters():
-            p.requires_grad = True
-        qf_params = list(qformer_module.parameters())
+            p.requires_grad = not CTX_FREEZE_BASE
         groups_to_add = []
         if USE_CONTEXT_QFORMER:
             # The new modules produce ZERO output at step 0 but NOT zero
@@ -682,8 +855,25 @@ def main():
             # separately is what keeps "step 0 is ARC-CT" from decaying into
             # "step 0 is ARC-CT and then something slower".
             ctx_mods = [qformer_module.context, qformer_module.conditioner,
-                        qformer_module.relevance, qformer_module.fusion]
+                        qformer_module.relevance]
+            if CTX_CFG.fusion != "class_logit":
+                ctx_mods.extend([qformer_module.fusion, qformer_module.gate_mlp,
+                                 qformer_module.gate_norm])
             ctx_ids = {id(p) for m in ctx_mods for p in m.parameters()}
+            if CTX_CFG.fusion == "gated":
+                ctx_ids.add(id(qformer_module.gate_scale))
+            if CTX_CFG.fusion == "class_logit":
+                ctx_ids.add(id(qformer_module.class_gate_scale))
+            if qformer_module.ctx_classifier is not None:
+                head_ids = {id(p) for p in qformer_module.ctx_classifier.parameters()}
+                ctx_ids.update(head_ids)
+                if CTX_CLS_HEAD_ONLY:
+                    ctx_ids = head_ids
+                    print("[RAC] ctx_cls HEAD-ONLY probe: all inherited C1 parameters frozen")
+            if CTX_FREEZE_BASE:
+                for p in qformer_module.parameters():
+                    p.requires_grad = id(p) in ctx_ids
+            qf_params = [p for p in qformer_module.parameters() if p.requires_grad]
             ctx_params = [p for p in qf_params if id(p) in ctx_ids]
             inherited = [p for p in qf_params if id(p) not in ctx_ids]
             # e_int carries 10x weight decay: the interaction table starts at
@@ -700,14 +890,17 @@ def main():
             groups_to_add.append({"params": inherited, "lr": VISION_LR,
                                   "weight_decay": WEIGHT_DECAY})
             groups_to_add.append({"params": [p for p in ctx_params if id(p) not in e_int_id],
-                                  "lr": ctx_lr, "weight_decay": WEIGHT_DECAY})
+                                  "lr": ctx_lr, "weight_decay": CTX_WEIGHT_DECAY})
             groups_to_add.append({"params": [qformer_module.context.e_int],
-                                  "lr": ctx_lr, "weight_decay": WEIGHT_DECAY * 10.0})
+                                  "lr": ctx_lr, "weight_decay": CTX_WEIGHT_DECAY})
             print(f"[RAC] Q-Former params: inherited {sum(p.numel() for p in inherited):,} "
                   f"@ lr={VISION_LR:.2e} | context "
                   f"{sum(p.numel() for p in ctx_params):,} @ lr={ctx_lr:.2e} "
                   f"({CTX_CFG.lr_mult:g}x, zero-init) -- clipped separately")
         else:
+            for p in qformer_module.parameters():
+                p.requires_grad = True
+            qf_params = [p for p in qformer_module.parameters() if p.requires_grad]
             groups_to_add.append({"params": qf_params, "lr": VISION_LR,
                                   "weight_decay": WEIGHT_DECAY})
         trainable.extend(qf_params)
@@ -720,6 +913,14 @@ def main():
                 optimizer.add_param_group(_group)
         n_qf = sum(p.numel() for p in qf_params)
         print(f"[RAC] Q-Former trainable params: {n_qf:,}")
+
+    if CTX_FREEZE_BASE:
+        clip.visual_transformer.eval()
+        clip.text_transformer.eval()
+        clip.to_visual_latent.eval()
+        clip.to_text_latent.eval()
+        if qformer_module is not None:
+            qformer_module.qformer.eval()
 
     if DEFER_OPT_BUILD:
         all_groups = optimizer_groups + extra_groups
@@ -735,10 +936,12 @@ def main():
     existing = _numbered_ckpts()
     best_ckpt = f"{RESULTS_DIR}/CTClip.best.pt"
     resume_from = None
-    if os.path.isfile(best_ckpt):
-        resume_from = best_ckpt
-    elif existing:
+    # The latest numbered checkpoint is the resumable training state.  The
+    # best checkpoint can be older and is reserved for final evaluation.
+    if existing:
         resume_from = existing[-1]
+    elif os.path.isfile(best_ckpt):
+        resume_from = best_ckpt
     if resume_from is not None:
         pkg = torch.load(resume_from, map_location=device)
         missing, unexpected = clip.load_state_dict(pkg["model"], strict=False)
@@ -812,6 +1015,8 @@ def main():
             extra["qformer_module"] = qformer_module.state_dict()
         if logit_scale is not None:
             extra["logit_scale"] = logit_scale.detach().cpu()
+        path = f"{RESULTS_DIR}/{name}.pt"
+        tmp_path = f"{path}.tmp.{os.getpid()}"
         torch.save(
             {
                 "model": clip.state_dict(),
@@ -829,6 +1034,26 @@ def main():
                     "text_lr": TEXT_LR,
                     "clip_weight": CLIP_WEIGHT,
                     "cls_weight": CLS_WEIGHT,
+                    "ctx_cls": CTX_CFG.ctx_cls,
+                    "ctx_cls_weight": CTX_CLS_WEIGHT,
+                    "ctx_cls_head_only": CTX_CLS_HEAD_ONLY,
+                    "stage2_cls_loss": STAGE2_CLS_LOSS,
+                    "asl_gamma_neg": ASL_GAMMA_NEG,
+                    "asl_gamma_pos": ASL_GAMMA_POS,
+                    "asl_clip": ASL_CLIP,
+                    "bnm_weight": BNM_WEIGHT,
+                    "val_selection": VAL_SELECTION,
+                    "ctx_separate_ind_loss": CTX_SEPARATE_IND_LOSS,
+                    "ctx_ind_weight": CTX_IND_WEIGHT,
+                    "ctx_weight_decay": CTX_WEIGHT_DECAY,
+                    "r3d_arch": os.environ.get("RAC_R3D_ARCH", "r3d_18"),
+                    "prompt_negative": PROMPT_NEGATIVE,
+                    "no_l2_clip": NO_L2_CLIP,
+                    "no_l2_prompt": NO_L2_PROMPT,
+                    "temperature": TEMPERATURE,
+                    "ctx_anatomy_queries": CTX_ANATOMY_QUERIES,
+                    "suppress_routing_mask": SUPPRESS_ROUTING_MASK,
+                    "metadata_mode": METADATA_MODE,
                     "align_weight": ALIGN_WEIGHT,
                     "fn_weight": FN_WEIGHT,
                     "max_text_len": MAX_TEXT_LEN,
@@ -842,11 +1067,52 @@ def main():
                     # them evaluates the wrong model with no error at all.
                     **({"query_layout": qformer_module.query_layout()}
                        if USE_CONTEXT_QFORMER and qformer_module is not None else {}),
+                    **({"ctx_config": {
+                        "enabled": CTX_CFG.enabled,
+                        "c1": CTX_CFG.c1,
+                        "c2": CTX_CFG.c2,
+                        "xattn": CTX_CFG.xattn,
+                        "film": CTX_CFG.film,
+                        "naive_fusion": CTX_CFG.naive_fusion,
+                        "film_eps": CTX_CFG.film_eps,
+                        "beta_init": CTX_CFG.beta_init,
+                        "lr_mult": CTX_CFG.lr_mult,
+                        "ind_dropout": CTX_CFG.ind_dropout,
+                        "cf_prob": CTX_CFG.cf_prob,
+                        "selfattn": CTX_CFG.selfattn,
+                        "zind_combine": CTX_CFG.zind_combine,
+                        "fusion": CTX_CFG.fusion,
+                        "ctx_cls": CTX_CFG.ctx_cls,
+                        "age_mode": CTX_CFG.age_mode,
+                        "ptok_weight": CTX_CFG.ptok_weight,
+                        "max_ind_len": CTX_CFG.max_ind_len,
+                    }} if USE_CONTEXT_QFORMER else {}),
                 },
             },
-            f"{RESULTS_DIR}/{name}.pt",
+            tmp_path,
         )
-        print(f"[RAC] Saved {RESULTS_DIR}/{name}.pt")
+        # A preemption or NFS interruption can otherwise leave a truncated
+        # file bearing a valid checkpoint name. os.replace is atomic on the
+        # target filesystem.
+        os.replace(tmp_path, path)
+        print(f"[RAC] Saved {path}", flush=True)
+
+    def link_best_as_numbered(step):
+        """Create the same-update resume checkpoint without a second 1.3GB write."""
+        src = f"{RESULTS_DIR}/CTClip.best.pt"
+        dst = f"{RESULTS_DIR}/CTClip.{step}.pt"
+        try:
+            if os.path.lexists(dst):
+                os.unlink(dst)
+            os.link(src, dst)
+        except OSError:
+            # Hard links may be unavailable on a future results filesystem.
+            save_ckpt(f"CTClip.{step}")
+
+    def prune_numbered_ckpts():
+        numbered = _numbered_ckpts()
+        for stale in numbered[:-KEEP_NUMBERED_CKPTS]:
+            os.unlink(stale)
 
     train_iter = iter(train_loader)
     optimizer.zero_grad(set_to_none=True)
@@ -862,7 +1128,10 @@ def main():
             qformer_module.context.encode_class_prompts(tokenizer, list(PATHOLOGIES)))
         print(f"[RAC] relevance class embeddings installed: "
               f"{tuple(qformer_module.relevance.class_emb.shape)} (frozen basis)")
-    log = {"clip": 0.0, "cls": 0.0, "align": 0.0, "ptok": 0.0, "ptok_ind": 0.0, "cf": 0.0, "n": 0.0, "mask": 0.0}
+    log = {"clip": 0.0, "cls": 0.0, "ind": 0.0, "ctx_cls": 0.0,
+           "bnm": 0.0,
+           "align": 0.0, "ptok": 0.0, "ptok_ind": 0.0,
+           "cf": 0.0, "n": 0.0, "mask": 0.0}
     stop_early = False
     t0 = time.time()
     pbar = tqdm.tqdm(initial=update_step, total=TOTAL_UPDATES, desc="RAC-updates")
@@ -887,16 +1156,11 @@ def main():
             qf_tokens = None
             ctx_out = None
             if USE_CONTEXT_QFORMER and qformer_module is not None:
-                ctx_tok = qformer_module.context.tokenize(
-                    tokenizer, ctx["indication"], CTX_CFG.max_ind_len, device)
-                ctx_bundle = qformer_module.context(
-                    ctx_tok["input_ids"], ctx_tok["attention_mask"],
-                    ctx["age_band"].to(device), ctx["sex"].to(device),
-                    age_years=ctx["age_years"].to(device),
-                    age_mode=CTX_CFG.age_mode)
+                ctx_bundle = build_context_bundle(
+                    qformer_module, tokenizer, ctx, device, CTX_CFG)
                 ctx_out = qformer_module(
                     feat_map, masks_fine, has_masks, context=ctx_bundle,
-                    return_parts=True)
+                    return_parts=True, suppress_mask=SUPPRESS_ROUTING_MASK)
                 img_lat, qf_tokens = ctx_out.z_final, ctx_out.tokens
             elif qformer_module is not None:
                 if USE_ANATOMY_QFORMER:
@@ -914,8 +1178,36 @@ def main():
                 temp_now = 1.0 / logit_scale.exp().clamp(max=LEARNABLE_TEMP_MAX_SCALE)
             else:
                 temp_now = TEMPERATURE
-            loss_clip = soft_clip_infonce(img_lat, txt_lat, labels, temperature=temp_now)
-            loss_cls = prompt_cls_loss(img_lat, pos_embs, neg_embs, labels, temperature=temp_now)
+            clip_lat = (ctx_out.z_gen if
+                        CTX_SEPARATE_IND_LOSS and ctx_out is not None else img_lat)
+            loss_clip = soft_clip_infonce(
+                clip_lat, txt_lat, labels, temperature=temp_now)
+            train_probs = context_or_global_probs(
+                qformer_module, ctx_out, img_lat,
+                pos_embs, neg_embs, temperature=temp_now)
+            if CTX_SEPARATE_IND_LOSS and ctx_out is not None:
+                general_probs = prompt_probs(
+                    ctx_out.z_gen, pos_embs, neg_embs, temperature=temp_now)
+                loss_cls = stage2_prompt_cls_loss(general_probs, labels)
+                ind_w = (ctx_out.w if ctx_out.w is not None else
+                         torch.ones_like(train_probs))
+                loss_ind = stage2_prompt_cls_loss(
+                    train_probs, labels, class_weights=ind_w)
+            else:
+                # Legacy local recipe: its single prompt term was evaluated on
+                # whichever readout the arm exposed. Kept for old checkpoints.
+                loss_cls = stage2_prompt_cls_loss(train_probs, labels)
+                loss_ind = torch.tensor(0.0, device=device)
+            loss_ctx_cls = (stage2_logits_cls_loss(
+                qformer_module.ctx_cls_logits(ctx_out), labels)
+                if CTX_CFG.ctx_cls and ctx_out is not None
+                else torch.tensor(0.0, device=device))
+            # BNM is an opt-in diversity auxiliary on the actual primary
+            # conditioned BxC predictions. It is intentionally independent of
+            # labels and therefore complements, rather than replaces, BCE/ASL.
+            loss_bnm = (batch_nuclear_norm_loss(train_probs)
+                        if BNM_WEIGHT > 0
+                        else torch.tensor(0.0, device=device))
 
             loss_align = torch.tensor(0.0, device=device)
             loss_pertoken = torch.tensor(0.0, device=device)
@@ -928,7 +1220,8 @@ def main():
                 Returns the per-cell loss and its labelled mask, so a caller can
                 either average it (the inherited term) or weight it (C2).
                 """
-                path_lat = F.normalize(path_tokens, dim=-1)
+                path_lat = (path_tokens if NO_L2_PROMPT else
+                            F.normalize(path_tokens, dim=-1))
                 sims_pos = (path_lat * pos_embs.unsqueeze(0)).sum(dim=-1)
                 sims_neg = (path_lat * neg_embs.unsqueeze(0)).sum(dim=-1)
                 logits_pt = torch.stack([sims_pos, sims_neg], dim=-1) / temp_now
@@ -1050,21 +1343,30 @@ def main():
                 if cf_idx:
                     sel = torch.tensor(cf_idx, device=device)
                     cf_txt = [ctx["indication_cf"][i] for i in cf_idx]
-                    cf_tok = qformer_module.context.tokenize(
-                        tokenizer, cf_txt, CTX_CFG.max_ind_len, device)
-                    cf_bundle = qformer_module.context(
-                        cf_tok["input_ids"], cf_tok["attention_mask"],
-                        ctx["age_band"].to(device)[sel], ctx["sex"].to(device)[sel],
-                        age_years=ctx["age_years"].to(device)[sel],
-                        age_mode=CTX_CFG.age_mode)
+                    cf_bundle = build_context_bundle(
+                        qformer_module, tokenizer, ctx, device, CTX_CFG,
+                        texts=cf_txt, rows=sel)
                     # feat_map is REUSED: the image did not change, only H_C did.
                     # Re-running forward_spatial would double the step cost for
                     # an identical tensor.
                     cf_out = qformer_module(
                         feat_map[sel], masks_fine[sel], has_masks[sel],
-                        context=cf_bundle, return_parts=True)
-                    p_true = prompt_probs(img_lat[sel], pos_embs, neg_embs, temp_now)
-                    p_cf = prompt_probs(cf_out.z_final, pos_embs, neg_embs, temp_now)
+                        context=cf_bundle, return_parts=True,
+                        suppress_mask=SUPPRESS_ROUTING_MASK)
+                    if CTX_CFG.fusion == "class_logit":
+                        p_true = qformer_module.class_prompt_probs(
+                            ContextOutput(*(x[sel] if isinstance(x, torch.Tensor) else x
+                                            for x in ctx_out)),
+                            pos_embs, neg_embs, temp_now,
+                            normalize=not NO_L2_PROMPT)
+                        p_cf = qformer_module.class_prompt_probs(
+                            cf_out, pos_embs, neg_embs, temp_now,
+                            normalize=not NO_L2_PROMPT)
+                    else:
+                        p_true = prompt_probs(
+                            img_lat[sel], pos_embs, neg_embs, temp_now)
+                        p_cf = prompt_probs(
+                            cf_out.z_final, pos_embs, neg_embs, temp_now)
                     # With C2 off there is no relevance signal, so there is no
                     # basis for calling any class irrelevant -- and the honest
                     # default is the STRONGER constraint: hold every class
@@ -1078,6 +1380,9 @@ def main():
                         low.sum(dim=-1).clamp(min=1.0)).mean()
 
             total = (CLIP_WEIGHT * loss_clip + CLS_WEIGHT * loss_cls
+                     + CTX_IND_WEIGHT * loss_ind
+                     + CTX_CLS_WEIGHT * loss_ctx_cls
+                     + BNM_WEIGHT * loss_bnm
                      + ALIGN_WEIGHT * loss_align
                      + PERTOKEN_NCE_WEIGHT * loss_pertoken
                      + CTX_PTOK_WEIGHT * loss_ptok_ind
@@ -1092,6 +1397,9 @@ def main():
 
         log["clip"] += float(loss_clip.detach().cpu())
         log["cls"] += float(loss_cls.detach().cpu())
+        log["ind"] += float(loss_ind.detach().cpu())
+        log["ctx_cls"] += float(loss_ctx_cls.detach().cpu())
+        log["bnm"] += float(loss_bnm.detach().cpu())
         log["align"] += float(loss_align.detach().cpu())
         log["ptok"] += float(loss_pertoken.detach().cpu()) if isinstance(loss_pertoken, torch.Tensor) else 0.0
         log["ptok_ind"] += float(loss_ptok_ind.detach().cpu())
@@ -1104,6 +1412,16 @@ def main():
 
         if scaler.is_enabled():
             scaler.unscale_(optimizer)
+        if (USE_CONTEXT_QFORMER and qformer_module is not None
+                and qformer_module.cfg.fusion == "class_logit"
+                and update_step < CTX_CLASS_GATE_WARMUP):
+            # First teach the conditioned pathology tokens what each class
+            # means. Opening a prediction gate while those tokens are still
+            # untrained caused the update-200 AUROC collapse in the first ctx3
+            # launch. Keep the exact ARC-CT prediction until this warmup ends.
+            qformer_module.class_gate_scale.grad = None
+            with torch.no_grad():
+                qformer_module.class_gate_scale.zero_()
         if ctx_params:
             # Two clips, not one. The context modules emit zero at step 0 but
             # NOT zero gradient, so a single global norm would be inflated by
@@ -1141,17 +1459,24 @@ def main():
             print(
                 f"[RAC] update={update_step:5d} micro={micro_step:7d} "
                 f"clip={log['clip']/denom:.4f} cls={log['cls']/denom:.4f} "
-                f"align={log['align']/denom:.4f} ptok={log['ptok']/denom:.4f} "
+                + (f"ctx_cls={log['ctx_cls']/denom:.4f} " if CTX_CFG.ctx_cls else "")
+                + (f"bnm={log['bnm']/denom:.4f} " if BNM_WEIGHT > 0 else "")
+                + f"ind={log['ind']/denom:.4f} align={log['align']/denom:.4f} "
+                f"ptok={log['ptok']/denom:.4f} "
                 + (f"ptok_ind={log['ptok_ind']/denom:.4f} cf={log['cf']/denom:.4f} "
                    f"beta={float(qformer_module.relevance.beta):.4f} "
-                   f"|Wi|/|Wg|={_fusion_ratio(qformer_module):.3f} "
+                   f"ctx_strength={_fusion_ratio(qformer_module):.3f} "
                    if USE_CONTEXT_QFORMER and qformer_module is not None else "") +
                 f"masked/batch={log['mask']/denom:.2f} "
                 f"lr={lr_vision:.2e}/{lr_text:.2e} t={(time.time()-t0)/60:.1f}m",
                 flush=True,
             )
-            log = {"clip": 0.0, "cls": 0.0, "align": 0.0, "ptok": 0.0, "ptok_ind": 0.0, "cf": 0.0, "n": 0.0, "mask": 0.0}  # noqa: E501
+            log = {"clip": 0.0, "cls": 0.0, "ind": 0.0, "ctx_cls": 0.0,
+                   "bnm": 0.0,
+                   "align": 0.0, "ptok": 0.0, "ptok_ind": 0.0,
+                   "cf": 0.0, "n": 0.0, "mask": 0.0}  # noqa: E501
 
+        best_was_updated = False
         if update_step % VAL_EVERY == 0:
             mean_auc, per_auc = run_validation(
                 clip, tokenizer, device, val_loader,
@@ -1182,13 +1507,15 @@ def main():
 
                       + " ".join(f"{i+1}:{float(v):.2f}" for i, v in enumerate(_a)), flush=True)
 
-            print(f"[RAC] update={update_step} global_val_auc={mean_auc:.4f} best={best_auc:.4f}", flush=True)
+            selection_head = VAL_SELECTION
+            print(f"[RAC] update={update_step} selection={selection_head} "
+                  f"val_auc={mean_auc:.4f} best={best_auc:.4f}", flush=True)
             if mean_auc > best_auc:
                 best_auc = mean_auc
                 best_step = update_step
                 patience = 0
                 save_ckpt("CTClip.best")
-                save_ckpt(f"CTClip.{update_step}")
+                best_was_updated = True
                 with open(f"{RESULTS_DIR}/best_auc_update{update_step}.txt", "w") as f:
                     for name in PATHOLOGIES:
                         f.write(f"{name:45s}: {per_auc[name]:.4f}\n")
@@ -1200,12 +1527,20 @@ def main():
                     stop_early = True
 
         if update_step % SAVE_EVERY == 0:
-            save_ckpt(f"CTClip.{update_step}")
+            if best_was_updated:
+                link_best_as_numbered(update_step)
+            else:
+                save_ckpt(f"CTClip.{update_step}")
+            prune_numbered_ckpts()
         if stop_early:
             break
 
     pbar.close()
-    save_ckpt(f"CTClip.{update_step}")
+    # A checkpoint boundary has already written this exact optimizer state.
+    # Do not break a same-update hard link with a second multi-GB save.
+    if update_step % SAVE_EVERY != 0:
+        save_ckpt(f"CTClip.{update_step}")
+    prune_numbered_ckpts()
     print(f"[RAC] Done. Best global val AUC={best_auc:.4f} at update={best_step}")
 
 

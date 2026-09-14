@@ -33,12 +33,15 @@ class QueryConditioner(nn.Module):
     """Condition a block of query vectors on the clinical context."""
 
     def __init__(self, dim: int = 768, num_heads: int = 8, film_eps: float = 0.2,
-                 dropout: float = 0.0):
+                 dropout: float = 0.0, use_xattn: bool = True,
+                 use_film: bool = True):
         super().__init__()
         if not 0.0 < film_eps <= 1.0:
             raise ValueError(f"film_eps must be in (0, 1], got {film_eps}")
         self.dim = int(dim)
         self.film_eps = float(film_eps)
+        self.use_xattn = bool(use_xattn)
+        self.use_film = bool(use_film)
 
         self.norm_q = nn.LayerNorm(dim)
         self.norm_c = nn.LayerNorm(dim)
@@ -79,17 +82,21 @@ class QueryConditioner(nn.Module):
             raise ValueError("a row of H_C is entirely padding")
 
         c = self.norm_c(H_C)
-        attn, _ = self.cross(self.norm_q(q), c, c,
-                             key_padding_mask=key_padding_mask, need_weights=False)
-        q = q + self.g_x * attn
+        if self.use_xattn:
+            attn, _ = self.cross(self.norm_q(q), c, c,
+                                 key_padding_mask=key_padding_mask, need_weights=False)
+            q = q + self.g_x * attn
 
-        cbar = self._masked_mean(c, key_padding_mask)
-        gamma = 1.0 + self.film_eps * torch.tanh(self.to_gamma(cbar))
-        beta = self.to_beta(cbar)
-        return gamma.unsqueeze(1) * q + beta.unsqueeze(1)
+        if self.use_film:
+            cbar = self._masked_mean(c, key_padding_mask)
+            gamma = 1.0 + self.film_eps * torch.tanh(self.to_gamma(cbar))
+            beta = self.to_beta(cbar)
+            q = gamma.unsqueeze(1) * q + beta.unsqueeze(1)
+        return q
 
     def extra_repr(self) -> str:
-        return f"dim={self.dim}, film_eps={self.film_eps}"
+        return (f"dim={self.dim}, film_eps={self.film_eps}, "
+                f"xattn={self.use_xattn}, film={self.use_film}")
 
 
 def _selftest() -> int:

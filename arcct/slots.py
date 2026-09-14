@@ -200,6 +200,9 @@ class CtxConfig:
     enabled: bool = False
     c1: bool = True                 # indication -> query conditioning
     c2: bool = True                 # relevance weighting of the conditioned pool
+    xattn: bool = True              # C1 gated cross-attention component
+    film: bool = True               # C1 FiLM component
+    naive_fusion: bool = False      # pooled metadata late-fusion control
     film_eps: float = 0.2           # gamma = 1 + eps*tanh(.), bounded away from 0
     beta_init: float = -2.0         # b, with beta = softplus(b) >= 0 structurally
     lr_mult: float = 20.0           # LR multiplier for the zero-init modules
@@ -207,7 +210,8 @@ class CtxConfig:
     cf_prob: float = 0.25
     selfattn: str = "split"         # "split" | "mask" | "none" (ablation)
     zind_combine: str = "mean"      # "mean" | "add"
-    fusion: str = "concat"          # "concat" | "gated"
+    fusion: str = "concat"          # "concat" | "gated" | "class_logit"
+    ctx_cls: bool = False            # supervised head over concat(Z_gen, Z_ind)
     age_mode: str = "band"          # "band" | "scalar" | "flat" | "shuffled"
     ptok_weight: float = 0.5
     max_ind_len: int = 64
@@ -221,6 +225,9 @@ class CtxConfig:
             enabled=_env_flag("RAC_USE_CONTEXT_QFORMER", "0"),
             c1=_env_flag("RAC_CTX_C1", "1"),
             c2=_env_flag("RAC_CTX_C2", "1"),
+            xattn=_env_flag("RAC_CTX_XATTN", "1"),
+            film=_env_flag("RAC_CTX_FILM", "1"),
+            naive_fusion=_env_flag("RAC_CTX_NAIVE_FUSION", "0"),
             film_eps=float(os.environ.get("RAC_CTX_FILM_EPS", "0.2")),
             beta_init=float(os.environ.get("RAC_CTX_BETA_INIT", "-2.0")),
             lr_mult=float(os.environ.get("RAC_CTX_LR_MULT", "20.0")),
@@ -229,6 +236,7 @@ class CtxConfig:
             selfattn=os.environ.get("RAC_CTX_SELFATTN", "split").lower(),
             zind_combine=os.environ.get("RAC_CTX_ZIND_COMBINE", "mean").lower(),
             fusion=os.environ.get("RAC_CTX_FUSION", "concat").lower(),
+            ctx_cls=_env_flag("RAC_CTX_CLS", "0"),
             age_mode=os.environ.get("RAC_AGE_MODE", "band").lower(),
             ptok_weight=float(os.environ.get("RAC_CTX_PTOK_WEIGHT", "0.5")),
             max_ind_len=int(os.environ.get("RAC_CTX_MAX_IND_LEN", "64")),
@@ -248,8 +256,9 @@ class CtxConfig:
         if self.selfattn not in ("split", "mask", "none"):
             problems.append(f"RAC_CTX_SELFATTN={self.selfattn!r}, expected "
                             "split|mask|none")
-        if self.fusion not in ("concat", "gated"):
-            problems.append(f"RAC_CTX_FUSION={self.fusion!r}, expected concat|gated")
+        if self.fusion not in ("concat", "gated", "class_logit"):
+            problems.append(f"RAC_CTX_FUSION={self.fusion!r}, expected "
+                            "concat|gated|class_logit")
         if self.age_mode not in ("band", "scalar", "flat", "shuffled"):
             problems.append(f"RAC_AGE_MODE={self.age_mode!r}, expected "
                             "band|scalar|flat|shuffled")

@@ -1,0 +1,51 @@
+% Auto-generated historical pediatric ablation table.
+\subsection{Completed historical age-$\geq5$ current-recipe ablations}
+\begin{table*}[t]
+\centering
+\caption{Completed current-recipe age-$\geq5$ 23-target ablations on the same historical validation split. Global denotes the conditioned/fused prompt readout; arms without a completed evaluation are omitted.}
+\label{tab:peds-ge5-complete}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+Arm & Global AUC & General AUC & Global F1 & Global accuracy & Global precision \\
+\midrule
+Full model, three-seed mean & 0.8387 & 0.8143 & 0.3644 & 0.8675 & 0.5082 \\
+CT-only, three-seed mean & 0.8050 & 0.8050 & 0.3303 & 0.8729 & 0.5174 \\
+\midrule
+Full current model, seed 0 & 0.8370 & 0.8076 & 0.3134 & 0.8695 & 0.5334 \\
+Full current model, seed 1 & 0.8393 & 0.8167 & 0.3400 & 0.8745 & 0.4924 \\
+Full current model, seed 2 & 0.8399 & 0.8185 & 0.4397 & 0.8586 & 0.4987 \\
+CT-only, seed 0 & 0.8177 & 0.8177 & 0.3738 & 0.8776 & 0.5820 \\
+CT-only, seed 1 & 0.8159 & 0.8159 & 0.3514 & 0.8792 & 0.5517 \\
+CT-only, seed 2 & 0.7813 & 0.7813 & 0.2657 & 0.8617 & 0.4185 \\
+Indication dropout 0.4 & 0.8216 & 0.7882 & 0.3314 & 0.8512 & 0.4987 \\
+C1 off & 0.8103 & 0.7893 & 0.2896 & 0.8016 & 0.3982 \\
+Indication conditioning only & 0.8204 & 0.7883 & 0.3591 & 0.8152 & 0.3997 \\
+Demographic conditioning only & 0.8085 & 0.7890 & 0.3874 & 0.8298 & 0.4060 \\
+Standard negative prompts & 0.8201 & 0.7767 & 0.3348 & 0.8257 & 0.4523 \\
+Auxiliary ctx\_cls & 0.8243 & 0.7880 & 0.3781 & 0.8391 & 0.4762 \\
+Indication-loss weight 1 & 0.8200 & 0.7862 & 0.3520 & 0.8173 & 0.4350 \\
+Indication-loss weight 4 & 0.8229 & 0.7893 & 0.3634 & 0.8359 & 0.4199 \\
+Qwen region text & 0.8206 & 0.7877 & 0.4036 & 0.7958 & 0.3817 \\
+One global query & 0.8221 & 0.7879 & 0.3274 & 0.8478 & 0.3971 \\
+Six global queries & 0.8238 & 0.7940 & 0.3294 & 0.8044 & 0.4276 \\
+Augmentation off & 0.8223 & 0.7795 & 0.3587 & 0.8039 & 0.3523 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+\begin{table}[t]
+\centering
+\caption{Available current-recipe indication interventions on the age-$\geq5$ cohort. Only completed evaluations are shown.}
+\label{tab:peds-ge5-intervention-final}
+\begin{tabular}{@{}llr@{}}
+\toprule
+Seed & Indication & AUROC \\
+\midrule
+0 & Correct & 0.8370 \\
+0 & Blank & 0.8180 \\
+1 & Correct & 0.8393 \\
+1 & Blank & 0.8204 \\
+1 & Shuffled & 0.8107 \\
+2 & Correct & 0.8399 \\
+\bottomrule
+\end{tabular}
+\end{table}

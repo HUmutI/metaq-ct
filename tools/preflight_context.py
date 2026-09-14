@@ -256,14 +256,18 @@ def main() -> int:
     from arcct.schema import active
     from arcct.slots import SlotLayout
     sch = active()
-    L = SlotLayout.phase1(n_path=len(sch["PATHOLOGIES"]),
-                          n_anatomy=len(sch["FINE_LABEL_NAMES"]) - 1)
+    use_anatomy = env("RAC_CTX_ANATOMY_QUERIES", "1") == "1"
+    n_anatomy = len(sch["FINE_LABEL_NAMES"]) - 1 if use_anatomy else 0
+    want_q = int(env("RAC_QFORMER_QUERIES", "0") or 0)
+    n_global = want_q - n_anatomy - len(sch["PATHOLOGIES"]) if want_q else 2
+    L = SlotLayout.phase1(
+        n_path=len(sch["PATHOLOGIES"]), n_anatomy=n_anatomy,
+        n_glob_gen=n_global)
     try:
         L.validate()
         ok(L.describe())
     except ValueError as exc:
         fail(f"P7: {exc}")
-    want_q = int(env("RAC_QFORMER_QUERIES", "0") or 0)
     if want_q and want_q != L.n_gen:
         fail(f"P7: RAC_QFORMER_QUERIES={want_q} but the unconditioned bank is "
              f"{L.n_gen}")

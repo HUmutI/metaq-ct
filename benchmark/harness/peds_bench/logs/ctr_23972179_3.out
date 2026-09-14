@@ -1,0 +1,103 @@
+[ckpt] tensors in checkpoint : 367
+[ckpt] tensors in model      : 369
+[ckpt] MATCHED & LOADED      : 364
+[ckpt] shape mismatches      : 0 []
+[ckpt] unexpected (ckpt only): 3 ['image_queue', 'text_queue', 'queue_ptr']
+[ckpt] missing  (model only) : 5 ['text_encoder.cls.predictions.bias', 'text_encoder.cls.predictions.transform.dense.weight', 'text_encoder.cls.predictions.transform.dense.bias', 'text_encoder.cls.predictions.transform.LayerNorm.weight', 'text_encoder.cls.predictions.transform.LayerNorm.bias']
+[ckpt]   of which visual_encoder=149 text_encoder=199 heads=16
+[ckpt] temp=0.087654  organs=['lung', 'heart', 'esophagus', 'aorta']
+CKPT matched 364
+shard 3: 250 volumes
+[3] 0/250 2s
+Mask id: 0 Rank: 0 Incomplete lung 0.9999962363729819
+Mask id: 0 Rank: 0 Incomplete lung 0.9999972392743046
+Mask id: 0 Rank: 0 Incomplete lung 0.9999566121326742
+Mask id: 0 Rank: 0 Incomplete lung 0.9999935487431877
+Mask id: 0 Rank: 0 Incomplete lung 0.9999944902215206
+Mask id: 0 Rank: 0 Incomplete lung 0.9999734063091485
+Mask id: 0 Rank: 0 Incomplete lung 0.9999880539133179
+Mask id: 0 Rank: 0 Incomplete lung 0.9997748931599516
+Mask id: 0 Rank: 0 Incomplete lung 0.9999205027389222
+[3] 25/250 6s
+Mask id: 0 Rank: 0 Incomplete lung 0.9998493340406556
+Mask id: 0 Rank: 0 Incomplete lung 0.9999623935428168
+Mask id: 0 Rank: 0 Incomplete lung 0.9999425317631734
+Mask id: 0 Rank: 0 Incomplete lung 0.9999364504392864
+Mask id: 0 Rank: 0 Incomplete lung 0.9999986079493516
+Mask id: 0 Rank: 0 Incomplete lung 0.9999751194847867
+Mask id: 0 Rank: 0 Incomplete lung 0.9999608979615549
+[3] 50/250 9s
+Mask id: 0 Rank: 0 Incomplete lung 0.999975917276533
+Mask id: 0 Rank: 0 Incomplete lung 0.9998917871697981
+Mask id: 0 Rank: 0 Incomplete lung 0.9999937835262201
+Mask id: 0 Rank: 0 Incomplete lung 0.9999380555966768
+Mask id: 0 Rank: 0 Incomplete lung 0.9998230480868493
+Mask id: 0 Rank: 0 Incomplete aorta 0.9987828627069133
+[3] 75/250 13s
+Mask id: 0 Rank: 0 Incomplete lung 0.9999994418861125
+Mask id: 0 Rank: 0 Incomplete lung 0.999942438665738
+Mask id: 0 Rank: 0 Incomplete lung 0.9999879475307805
+Mask id: 0 Rank: 0 Incomplete lung 0.9999681395873938
+Mask id: 0 Rank: 0 Incomplete lung 0.9999382351856632
+Mask id: 0 Rank: 0 Incomplete lung 0.9999887487573405
+Mask id: 0 Rank: 0 Incomplete lung 0.9999993129282175
+Mask id: 0 Rank: 0 Incomplete lung 0.9999949506170346
+[3] 100/250 17s
+Mask id: 0 Rank: 0 Incomplete lung 0.9999863467342412
+Mask id: 0 Rank: 0 Incomplete lung 0.9999995189370433
+Mask id: 0 Rank: 0 Incomplete aorta 0.9861736671205614
+Mask id: 0 Rank: 0 Incomplete lung 0.9999820677156679
+Mask id: 0 Rank: 0 Incomplete lung 0.9999726066351947
+Mask id: 0 Rank: 0 Incomplete lung 0.9999789640587797
+Mask id: 0 Rank: 0 Incomplete lung 0.9999920770951461
+Mask id: 0 Rank: 0 Incomplete lung 0.9999370488084875
+Mask id: 0 Rank: 0 Incomplete lung 0.9998408569895566
+Mask id: 0 Rank: 0 Incomplete lung 0.9998400840293835
+[3] 125/250 21s
+Mask id: 0 Rank: 0 Incomplete lung 0.9998762131728
+Mask id: 0 Rank: 0 Incomplete lung 0.9999385333451565
+Mask id: 0 Rank: 0 Incomplete lung 0.9999980060178382
+Mask id: 0 Rank: 0 Incomplete lung 0.9999419605072568
+Mask id: 0 Rank: 0 Incomplete lung 0.9999873780293274
+Mask id: 0 Rank: 0 Incomplete lung 0.9999620837335605
+Mask id: 0 Rank: 0 Incomplete lung 0.9999954028695288
+Mask id: 0 Rank: 0 Incomplete lung 0.9999597927665579
+[3] 150/250 25s
+Mask id: 0 Rank: 0 Incomplete lung 0.9999783875593706
+Mask id: 0 Rank: 0 Incomplete lung 0.9999533756061171
+Mask id: 0 Rank: 0 Incomplete lung 0.9999589086379562
+Mask id: 0 Rank: 0 Incomplete lung 0.9999635755373308
+Mask id: 0 Rank: 0 Incomplete lung 0.9999855077864593
+Mask id: 0 Rank: 0 Incomplete lung 0.9999993523907467
+Mask id: 0 Rank: 0 Incomplete lung 0.999996991321165
+Mask id: 0 Rank: 0 Incomplete lung 0.999999487072693
+[3] 175/250 29s
+Mask id: 0 Rank: 0 Incomplete lung 0.99999455353413
+Mask id: 0 Rank: 0 Incomplete lung 0.9999551138379792
+Mask id: 0 Rank: 0 Incomplete lung 0.9999739875465379
+Mask id: 0 Rank: 0 Incomplete lung 0.9999774985783193
+Mask id: 0 Rank: 0 Incomplete lung 0.9999872124514187
+Mask id: 0 Rank: 0 Incomplete lung 0.9998890411886233
+Mask id: 0 Rank: 0 Incomplete heart 0.9842246411105853
+[3] 200/250 32s
+Mask id: 0 Rank: 0 Incomplete lung 0.9999991838237124
+Mask id: 0 Rank: 0 Incomplete lung 0.9999667553904525
+Mask id: 0 Rank: 0 Incomplete lung 0.9999910701420051
+Mask id: 0 Rank: 0 Incomplete lung 0.9999861752426245
+Mask id: 0 Rank: 0 Incomplete lung 0.9999887196311319
+Mask id: 0 Rank: 0 Incomplete lung 0.9999786026525159
+Mask id: 0 Rank: 0 Incomplete lung 0.9999712448672088
+Mask id: 0 Rank: 0 Incomplete lung 0.9999653229848714
+Mask id: 0 Rank: 0 Incomplete lung 0.9999853318665199
+Mask id: 0 Rank: 0 Incomplete lung 0.9999807490172373
+[3] 225/250 36s
+Mask id: 0 Rank: 0 Incomplete lung 0.9999979851891253
+Mask id: 0 Rank: 0 Incomplete lung 0.9999926742789048
+Mask id: 0 Rank: 0 Incomplete lung 0.999963611222299
+Mask id: 0 Rank: 0 Incomplete lung 0.9999510511759955
+Mask id: 0 Rank: 0 Incomplete lung 0.9999905981298826
+Mask id: 0 Rank: 0 Incomplete lung 0.9998896451097546
+Mask id: 0 Rank: 0 Incomplete lung 0.9999947880351819
+Mask id: 0 Rank: 0 Incomplete lung 0.9999829913652831
+Mask id: 0 Rank: 0 Incomplete lung 0.9999693148527692
+SHARD_DONE 3

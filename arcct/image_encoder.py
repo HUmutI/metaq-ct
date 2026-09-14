@@ -1,4 +1,4 @@
-"""3-channel R3D-18 image encoder for RAC-CLIP.
+"""3-channel torchvision video-ResNet image encoder for RAC-CLIP.
 
 The final TIA recipe feeds clinical HU windows as three channels and keeps the
 native torchvision/Kinetics R3D-18 stem. Spatial features are exposed directly
@@ -15,27 +15,44 @@ import torchvision.models.video as models
 
 
 class RACImageEncoder(nn.Module):
-    """R3D-18 backbone with reusable layer4 spatial features."""
+    """R3D-18 or R(2+1)D-18 backbone with reusable layer4 features.
+
+    ``r3d_18`` remains the default for checkpoint compatibility.  The Biltir
+    prompt-main handoff uses ``r2plus1d_18`` and selects it with
+    ``RAC_R3D_ARCH``.  Both torchvision models expose the same stage/channel
+    interface, so the Q-Former still receives a 512-channel spatial map.
+    """
 
     FEAT_DIM = 512
     IN_CHANNELS = 3
 
-    def __init__(self, pretrained_kinetics: bool = True):
+    def __init__(self, pretrained_kinetics: bool = True, arch: str | None = None):
         super().__init__()
+        self.arch = (arch or os.environ.get("RAC_R3D_ARCH", "r3d_18")).lower()
+        specs = {
+            "r3d_18": (models.r3d_18, "R3D_18_Weights"),
+            "r2plus1d_18": (models.r2plus1d_18, "R2Plus1D_18_Weights"),
+        }
+        if self.arch not in specs:
+            raise ValueError(
+                f"RAC_R3D_ARCH={self.arch!r}; expected r3d_18 or r2plus1d_18")
+        builder, weights_name = specs[self.arch]
         try:
-            weights = models.R3D_18_Weights.KINETICS400_V1 if pretrained_kinetics else None
-            backbone = models.r3d_18(weights=weights)
+            weights_enum = getattr(models, weights_name)
+            weights = weights_enum.KINETICS400_V1 if pretrained_kinetics else None
+            backbone = builder(weights=weights)
         except AttributeError:
-            backbone = models.r3d_18(pretrained=pretrained_kinetics)
+            backbone = builder(pretrained=pretrained_kinetics)
         except Exception as exc:
             if pretrained_kinetics and os.environ.get("RAC_KINETICS_REQUIRED", "1") == "1":
                 raise RuntimeError(
-                    "Kinetics R3D-18 weights were requested but could not be loaded. "
+                    f"Kinetics {self.arch} weights were requested but could not be loaded. "
                     "Set TORCH_HOME to a writable warmed cache, or set RAC_KINETICS_REQUIRED=0 "
                     "only for smoke/debug runs."
                 ) from exc
-            print(f"[RACImageEncoder] Kinetics weight load failed ({exc}); using random R3D-18 init")
-            backbone = models.r3d_18(weights=None)
+            print(f"[RACImageEncoder] Kinetics weight load failed ({exc}); "
+                  f"using random {self.arch} init")
+            backbone = builder(weights=None)
         backbone.avgpool = nn.Identity()
         backbone.fc = nn.Identity()
         self.backbone = backbone

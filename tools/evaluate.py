@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -33,9 +34,9 @@ from arcct.anatomy_qformer import AnatomyQFormer  # noqa: E402
 
 
 DATA_ROOT = os.environ.get("RAC_DATA_ROOT", "/mnt/amax5_drive/alp_ozaydin_0/data")
-DATA_VALID = f"{DATA_ROOT}/mps_ct_npz/valid"
+DATA_VALID = os.environ.get("RAC_DATA_VALID", f"{DATA_ROOT}/mps_ct_npz/valid")
 MASK_VALID = os.environ.get("RAC_MASK_VALID", "/mnt/amax2_drive/alp_ozaydin_0/data/fine_valid_masks_192")
-REPORTS_VALID = f"{DATA_ROOT}/ct_reports/valid_reports.csv"
+REPORTS_VALID = os.environ.get("RAC_REPORTS_VALID", f"{DATA_ROOT}/ct_reports/valid_reports.csv")
 LABELS_VALID = os.environ.get("RAC_LABELS_VALID", f"{DATA_ROOT}/multi_abnormality_labels/valid_predicted_labels.csv")
 CKPT = os.environ.get("EVAL_CKPT", "")
 RESULTS_DIR = os.environ.get("EVAL_RESULTS_DIR", "")
@@ -85,7 +86,9 @@ def build_model_for_eval(ckpt_path):
         n = apply_lora_to_bert(text_encoder, r=lora_r, alpha=lora_alpha)
         print(f"[eval] Applied LoRA structure to {n} projections for checkpoint load")
 
-    image_encoder = RACImageEncoder(pretrained_kinetics=False)
+    image_encoder = RACImageEncoder(
+        pretrained_kinetics=False,
+        arch=str(cfg.get("r3d_arch", os.environ.get("RAC_R3D_ARCH", "r3d_18"))))
     clip = CTCLIP(
         image_encoder=image_encoder,
         text_encoder=text_encoder,
@@ -128,6 +131,7 @@ def build_model_for_eval(ckpt_path):
 
     clip.qformer_module = None
     clip.use_anatomy_qformer = False
+    clip.use_context_qformer = False
     clip.itm_module = None
     clip.lm_bridge = None
 
@@ -177,13 +181,25 @@ def build_model_for_eval(ckpt_path):
                 n_path_cond=ctx_layout["n_path_cond"])
             layout.validate()
             print(f"[eval] context Q-Former: {layout.describe()}")
+            saved_ctx = cfg.get("ctx_config")
+            if saved_ctx:
+                ctx_cfg = CtxConfig(**{**CtxConfig().__dict__, **saved_ctx})
+                ctx_cfg.validate()
+                print("[eval] restored context configuration from checkpoint")
+            else:
+                ctx_cfg = CtxConfig.from_env()
+            has_ctx_cls = any(k.startswith("ctx_classifier.") for k in (qf_state or {}))
+            if has_ctx_cls and not ctx_cfg.ctx_cls:
+                ctx_cfg = replace(ctx_cfg, ctx_cls=True)
+                print("[eval] auto-detected supervised ctx_cls head")
             qformer_module = ContextQFormer(
                 anatomy_labels=anatomy_labels,
                 pathology_labels=pathology_labels,
-                layout=layout, cfg=CtxConfig.from_env(),
+                layout=layout, cfg=ctx_cfg,
                 dim=QFORMER_DIM, depth=QFORMER_DEPTH, num_heads=QFORMER_HEADS,
                 image_dim=RACImageEncoder.FEAT_DIM,
             )
+            clip.use_context_qformer = True
         elif want_anatomy:
             anatomy_labels = list(range(1, 11))
             pathology_labels = [PATHOLOGY_FINE_ORGANS[name] for name in PATHOLOGIES]
@@ -248,23 +264,42 @@ def build_model_for_eval(ckpt_path):
             print(f"[eval] Loaded generative bridge dim={out_dim} missing={len(m_lm)} unexpected={len(u_lm)}")
         clip.lm_bridge = lm_bridge
 
+    clip.eval_recipe = {
+        "prompt_negative": str(cfg.get(
+            "prompt_negative", os.environ.get("RAC_PROMPT_NEGATIVE", "standard"))).lower(),
+        "no_l2_prompt": bool(cfg.get(
+            "no_l2_prompt", os.environ.get("RAC_NO_L2_PROMPT", "0") == "1")),
+        "suppress_routing_mask": bool(cfg.get(
+            "suppress_routing_mask",
+            os.environ.get("RAC_SUPPRESS_ROUTING_MASK", "0") == "1")),
+        "metadata_mode": str(
+            os.environ.get("RAC_EVAL_METADATA_MODE", "").strip()
+            or cfg.get("metadata_mode", "all")).lower(),
+    }
     return clip, tokenizer
 
 
 @torch.no_grad()
 def encode_prompts(clip, tokenizer, device):
+    recipe = getattr(clip, "eval_recipe", {})
     pos = tokenizer([f"{p}." for p in PATHOLOGIES], return_tensors="pt", padding="max_length", truncation=True, max_length=PROMPT_LEN).to(device)
-    neg = tokenizer([f"No {p}." for p in PATHOLOGIES], return_tensors="pt", padding="max_length", truncation=True, max_length=PROMPT_LEN).to(device)
+    neg_text = ([""] * len(PATHOLOGIES)
+                if recipe.get("prompt_negative") in ("null", "empty")
+                else [f"No {p}." for p in PATHOLOGIES])
+    neg = tokenizer(neg_text, return_tensors="pt", padding="max_length", truncation=True, max_length=PROMPT_LEN).to(device)
     out_pos = clip.text_transformer(pos["input_ids"], pos["attention_mask"])
     out_neg = clip.text_transformer(neg["input_ids"], neg["attention_mask"])
-    return (
-        F.normalize(clip.to_text_latent(out_pos[0][:, 0, :]), dim=-1),
-        F.normalize(clip.to_text_latent(out_neg[0][:, 0, :]), dim=-1),
-    )
+    pos_emb = clip.to_text_latent(out_pos[0][:, 0, :])
+    neg_emb = clip.to_text_latent(out_neg[0][:, 0, :])
+    if not recipe.get("no_l2_prompt", False):
+        pos_emb = F.normalize(pos_emb, dim=-1)
+        neg_emb = F.normalize(neg_emb, dim=-1)
+    return pos_emb, neg_emb
 
 
-def prompt_probs(img_lat, pos_embs, neg_embs):
-    img_lat = F.normalize(img_lat, dim=-1)
+def prompt_probs(img_lat, pos_embs, neg_embs, *, no_l2=False):
+    if not no_l2:
+        img_lat = F.normalize(img_lat, dim=-1)
     sims_pos = img_lat @ pos_embs.T
     sims_neg = img_lat @ neg_embs.T
     stacked = torch.stack([sims_pos, sims_neg], dim=-1) / TEMPERATURE
@@ -380,6 +415,7 @@ def evaluate(clip, tokenizer, device):
     clip.eval()
     qformer_module = getattr(clip, "qformer_module", None)
     use_anatomy_qformer = bool(getattr(clip, "use_anatomy_qformer", False))
+    use_context_qformer = bool(getattr(clip, "use_context_qformer", False))
     if qformer_module is not None:
         qformer_module.eval()
     pos_embs, neg_embs = encode_prompts(clip, tokenizer, device)
@@ -391,30 +427,85 @@ def evaluate(clip, tokenizer, device):
         is_train=False,
         limit=VAL_LIMIT,
         fail_fast=FAIL_FAST,
+        volume_list_path=os.environ.get("RAC_VOLUME_LIST_VALID", ""),
+        volume_exclude_path=os.environ.get("RAC_VOLUME_EXCLUDE", ""),
     )
     val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS, collate_fn=rac_collate, pin_memory=True)
 
-    global_pred, routed_pred, all_true, all_accessions = [], [], [], []
+    global_pred, general_prompt_pred = [], []
+    routed_pred, ctx_cls_pred, all_true, all_accessions = [], [], [], []
     n_routed_total = 0
+    recipe = getattr(clip, "eval_recipe", {})
+    no_l2_prompt = bool(recipe.get("no_l2_prompt", False))
+    suppress_routing = bool(recipe.get("suppress_routing_mask", False))
     for ct, _, _, labels, masks_fine, has_masks, accessions, ctx in tqdm.tqdm(val_loader, desc="Eval"):
         ct = ct.to(device, non_blocking=True)
         masks_fine = masks_fine.to(device, non_blocking=True)
         has_masks = has_masks.to(device, non_blocking=True)
         feat_map = clip.visual_transformer.forward_spatial(ct)
+        ctx_out = None
         if qformer_module is not None:
             # Q-Former replaces the global to_visual_latent path. The 32
             # learnable queries cross-attend to the layer4 feature map;
             # ``pool="mean"`` averages the 32 tokens into a single 768-d
             # vector that we L2-normalize as the visual latent.
-            if use_anatomy_qformer:
+            if use_context_qformer:
+                # Match train_stage2.run_validation exactly.  ContextQFormer
+                # cannot be evaluated from image features alone: indication,
+                # age and sex jointly build the context token bank that C1/C2
+                # consume.  The old evaluator auto-detected and loaded the
+                # context checkpoint correctly, then silently discarded these
+                # batch fields and called the legacy anatomy-only interface.
+                ctx_cfg = qformer_module.cfg
+                metadata_mode = recipe.get("metadata_mode", "all")
+                ind_text = list(ctx["indication"])
+                age_band = ctx["age_band"].to(device)
+                sex = ctx["sex"].to(device)
+                age_years = ctx["age_years"].to(device)
+                if metadata_mode in ("demographics", "none"):
+                    from arcct.context import NO_INDICATION
+                    ind_text = [NO_INDICATION] * len(ind_text)
+                if metadata_mode in ("indication", "none"):
+                    age_band = torch.full_like(age_band, -1)
+                    sex = torch.full_like(sex, -1)
+                    age_years = torch.full_like(age_years, -1.0)
+                tok = qformer_module.context.tokenize(
+                    tokenizer, ind_text, ctx_cfg.max_ind_len, device)
+                bundle = qformer_module.context(
+                    tok["input_ids"], tok["attention_mask"],
+                    age_band, sex, age_years=age_years,
+                    age_mode=ctx_cfg.age_mode)
+                # Always retain both branches.  The same-checkpoint general vs
+                # conditioned comparison is the core prompt ablation and must
+                # not require a second reconstruction of the model.
+                ctx_out = qformer_module(
+                    feat_map, masks_fine, has_masks,
+                    context=bundle, return_parts=True,
+                    suppress_mask=suppress_routing)
+                pooled = ctx_out.z_final
+            elif use_anatomy_qformer:
                 pooled = qformer_module(feat_map, masks_fine, has_masks)
             else:
                 pooled = qformer_module(feat_map)
-            global_lat = F.normalize(pooled, dim=-1)
+            global_lat = pooled if no_l2_prompt else F.normalize(pooled, dim=-1)
         else:
             raw = clip.visual_transformer.global_pool(feat_map)
-            global_lat = F.normalize(clip.to_visual_latent(raw), dim=-1)
-        gp = prompt_probs(global_lat, pos_embs, neg_embs)
+            raw_lat = clip.to_visual_latent(raw)
+            global_lat = raw_lat if no_l2_prompt else F.normalize(raw_lat, dim=-1)
+        if ctx_out is not None and qformer_module.cfg.fusion == "class_logit":
+            gp = qformer_module.class_prompt_probs(
+                ctx_out, pos_embs, neg_embs, TEMPERATURE,
+                normalize=not no_l2_prompt)
+        else:
+            gp = prompt_probs(
+                global_lat, pos_embs, neg_embs, no_l2=no_l2_prompt)
+        if ctx_out is not None:
+            genp = prompt_probs(
+                ctx_out.z_gen, pos_embs, neg_embs, no_l2=no_l2_prompt)
+            general_prompt_pred.append(genp.float().cpu().numpy())
+        if ctx_out is not None and qformer_module.ctx_classifier is not None:
+            ctx_cls_pred.append(torch.sigmoid(
+                qformer_module.ctx_cls_logits(ctx_out)).float().cpu().numpy())
 
         if ORGAN_LABELS and masks_fine.numel() > 0:
             organ_raw, organ_valid = clip.visual_transformer.pool_organ_masks(feat_map, masks_fine, ORGAN_LABELS)
@@ -431,17 +522,40 @@ def evaluate(clip, tokenizer, device):
         all_accessions.extend(accessions)
 
     pred_global = np.concatenate(global_pred)
+    pred_general_prompt = (np.concatenate(general_prompt_pred)
+                           if general_prompt_pred else None)
     pred_routed = np.concatenate(routed_pred)
     true = np.concatenate(all_true).astype(np.int32)
     accessions = np.asarray(all_accessions)
+
+    pred_ctx_cls = np.concatenate(ctx_cls_pred) if ctx_cls_pred else None
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
     bundle_global = compute_metric_bundle(pred_global, true, PATHOLOGIES, accessions=accessions, threshold=THRESHOLD, n_bootstrap=N_BOOTSTRAP)
     bundle_routed = compute_metric_bundle(pred_routed, true, PATHOLOGIES, accessions=accessions, threshold=THRESHOLD, n_bootstrap=N_BOOTSTRAP)
     with open(f"{RESULTS_DIR}/metric_bundle_global.json", "w") as f:
         json.dump(bundle_global, f, indent=2)
+    if pred_general_prompt is not None:
+        bundle_general_prompt = compute_metric_bundle(
+            pred_general_prompt, true, PATHOLOGIES, accessions=accessions,
+            threshold=THRESHOLD, n_bootstrap=N_BOOTSTRAP)
+        with open(f"{RESULTS_DIR}/metric_bundle_general_prompt.json", "w") as f:
+            json.dump(bundle_general_prompt, f, indent=2)
     with open(f"{RESULTS_DIR}/metric_bundle_routed.json", "w") as f:
         json.dump(bundle_routed, f, indent=2)
+    if pred_ctx_cls is not None:
+        bundle_ctx_cls = compute_metric_bundle(
+            pred_ctx_cls, true, PATHOLOGIES, accessions=accessions,
+            threshold=THRESHOLD, n_bootstrap=N_BOOTSTRAP)
+        with open(f"{RESULTS_DIR}/metric_bundle_ctx_cls.json", "w") as f:
+            json.dump(bundle_ctx_cls, f, indent=2)
+        pd.DataFrame(pred_ctx_cls, columns=PATHOLOGIES).to_csv(
+            f"{RESULTS_DIR}/predicted_labels_ctx_cls.csv", index=False)
+        np.savez_compressed(
+            f"{RESULTS_DIR}/predictions_ctx_cls.npz",
+            pred=pred_ctx_cls.astype(np.float32), true=true,
+            pathologies=np.array(PATHOLOGIES), accessions=accessions,
+            mode=np.array("supervised_ctx_cls"))
 
     pd.DataFrame(pred_global, columns=PATHOLOGIES).to_csv(f"{RESULTS_DIR}/predicted_labels_global.csv", index=False)
     pd.DataFrame(pred_routed, columns=PATHOLOGIES).to_csv(f"{RESULTS_DIR}/predicted_labels_routed.csv", index=False)
@@ -490,6 +604,12 @@ def evaluate(clip, tokenizer, device):
           f"  Acc={bundle_global['macro']['acc']:.4f}  Prec={bundle_global['macro']['precision']:.4f}  F1={bundle_global['macro']['f1']:.4f}")
     print(f"[eval] Routed  AUC={bundle_routed['macro']['auc']:.4f} CI=[{bundle_routed['macro']['auc_ci_lo']:.4f}, {bundle_routed['macro']['auc_ci_hi']:.4f}]"
           f"  Acc={bundle_routed['macro']['acc']:.4f}  Prec={bundle_routed['macro']['precision']:.4f}  F1={bundle_routed['macro']['f1']:.4f}")
+    if pred_ctx_cls is not None:
+        print(f"[eval] Ctx-cls AUC={bundle_ctx_cls['macro']['auc']:.4f} "
+              f"CI=[{bundle_ctx_cls['macro']['auc_ci_lo']:.4f}, "
+              f"{bundle_ctx_cls['macro']['auc_ci_hi']:.4f}] "
+              f"Acc={bundle_ctx_cls['macro']['acc']:.4f} "
+              f"F1={bundle_ctx_cls['macro']['f1']:.4f}")
     print(f"[eval] Saved to {RESULTS_DIR}")
 
 

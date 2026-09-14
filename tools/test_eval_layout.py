@@ -92,6 +92,23 @@ def main() -> int:
     ctx_pkg = {"config": {"query_layout": ctx.query_layout()},
                "qformer_module": ctx.state_dict()}
 
+    # Qualitative analysis must inspect the real widened bank, not replay the
+    # legacy 18-class module.  Exercise the context return-attention contract
+    # on a small synthetic batch so visualization cannot silently swap models.
+    feat = torch.randn(1, image_dim, 2, 2, 2)
+    ids = torch.tensor([[1, 2, 0]])
+    amask = torch.tensor([[1, 1, 0]])
+    ctx.relevance.set_class_embeddings(torch.randn(P, dim))
+    bundle = ctx.context(ids, amask, torch.tensor([2]), torch.tensor([0]))
+    with torch.no_grad():
+        parts, attn = ctx(feat, context=bundle, return_parts=True,
+                          return_attn=True, suppress_mask=True)
+    check(tuple(attn.shape) == (1, heads, L.n_slots, 8),
+          f"context attention shape is wrong: {tuple(attn.shape)}")
+    check(tuple(parts.tokens.shape) == (1, L.n_slots, dim),
+          f"context token shape is wrong: {tuple(parts.tokens.shape)}")
+    check(bool(torch.isfinite(attn).all()), "context attention contains NaN/Inf")
+
     # -- the failure mode is real --------------------------------------------
     # A 3-global AnatomyQFormer has exactly the context bank's row count, so the
     # old arithmetic produced a module the context state loads into cleanly.

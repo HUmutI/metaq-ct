@@ -480,7 +480,7 @@ class RACDatasetV4(Dataset):
         # max normalised delta of 0.5, which is enough that evaluate.py would no
         # longer reproduce 0.8524 bit-for-bit. The adult path is a verified
         # anchor; it does not move without a reason of its own.
-        if _ACTIVE["name"] == "peds":
+        if _ACTIVE["name"] in ("peds", "peds23"):
             AIR = 1.024                  # -1024 HU, the CT-RATE floor
             arr = np.maximum(arr, -AIR)
             arr = _pad_crop_hwd(arr + AIR, RACDatasetV4.SPATIAL_HWD) - AIR

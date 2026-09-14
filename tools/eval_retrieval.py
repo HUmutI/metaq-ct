@@ -166,9 +166,24 @@ def main():
     ap.add_argument("--num_workers", type=int, default=int(os.environ.get("EVAL_NUM_WORKERS", "4")))
     ap.add_argument("--max_txt_len", type=int, default=int(os.environ.get("RAC_RETRIEVAL_TXT_LEN", "256")))
     ap.add_argument("--n_bootstrap", type=int, default=int(os.environ.get("EVAL_BOOTSTRAP", "1000")))
+    ap.add_argument("--limit", type=int, default=int(os.environ.get("EVAL_VAL_LIMIT", "0")))
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--run_name", default=os.environ.get("EVAL_RUN_NAME", "seed0"))
     ap.add_argument("--labels_csv", default=os.environ.get("EVAL_LABELS_VALID", LABELS_VALID))
+    ap.add_argument(
+        "--embedding_mode",
+        choices=("general", "conditioned", "mixed", "final", "backbone"),
+        default=os.environ.get("RAC_RETRIEVAL_EMBEDDING", "general"),
+        help=("Image representation used for retrieval. For a context Q-Former, "
+              "general=z_gen (canonical shared embedding), conditioned=z_ind, "
+              "mixed=normalize(z_gen+z_ind), and final=z_final. backbone is the "
+              "legacy pre-Q-Former global-pool path."),
+    )
+    ap.add_argument(
+        "--use_masks",
+        action="store_true",
+        help="Enable anatomy routing masks at inference (default: mask-free).",
+    )
     args = ap.parse_args()
     assert args.ckpt and args.out_dir, "EVAL_CKPT and EVAL_RESULTS_DIR (or --ckpt/--out_dir) are required"
     os.makedirs(args.out_dir, exist_ok=True)
@@ -180,18 +195,60 @@ def main():
     ds = RACDatasetV4(
         DATA_VALID, REPORTS_VALID, LABELS_VALID,
         mask_root=MASK_VALID if os.path.isdir(MASK_VALID) else None,
-        is_train=False, limit=0, fail_fast=False,
+        is_train=False, limit=args.limit, fail_fast=False,
     )
     loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False,
                         num_workers=args.num_workers, collate_fn=rac_collate, pin_memory=True)
 
+    qformer = getattr(clip, "qformer_module", None)
+    use_context = bool(getattr(clip, "use_context_qformer", False))
+    use_anatomy = bool(getattr(clip, "use_anatomy_qformer", False))
+    if args.embedding_mode in ("conditioned", "mixed") and not use_context:
+        raise RuntimeError(f"embedding_mode={args.embedding_mode} requires a context Q-Former checkpoint")
+
+    print(f"[retrieval] embedding={args.embedding_mode} mask_free={not args.use_masks} "
+          f"context_qformer={use_context} anatomy_qformer={use_anatomy}")
+
     img_latents, txt_latents, accs_all = [], [], []
     with torch.no_grad():
-        for ct, texts, _, _, _, _, accessions, _ in tqdm.tqdm(loader, desc="Encode img+txt"):
+        for ct, texts, _, _, masks_fine, has_masks, accessions, ctx in tqdm.tqdm(loader, desc="Encode img+txt"):
             ct = ct.to(device, non_blocking=True)
+            masks_fine = masks_fine.to(device, non_blocking=True)
+            has_masks = has_masks.to(device, non_blocking=True)
             feat_map = clip.visual_transformer.forward_spatial(ct)
-            raw = clip.visual_transformer.global_pool(feat_map)
-            img_lat = F.normalize(clip.to_visual_latent(raw), dim=-1)
+            if args.embedding_mode == "backbone" or qformer is None:
+                raw = clip.visual_transformer.global_pool(feat_map)
+                image_repr = clip.to_visual_latent(raw)
+            elif use_context:
+                cfg = qformer.cfg
+                tok = qformer.context.tokenize(
+                    tokenizer, ctx["indication"], cfg.max_ind_len, device)
+                bundle = qformer.context(
+                    tok["input_ids"], tok["attention_mask"],
+                    ctx["age_band"].to(device), ctx["sex"].to(device),
+                    age_years=ctx["age_years"].to(device),
+                    age_mode=cfg.age_mode,
+                )
+                out = qformer(
+                    feat_map, masks_fine, has_masks, context=bundle,
+                    return_parts=True, suppress_mask=not args.use_masks,
+                )
+                if args.embedding_mode == "general":
+                    image_repr = out.z_gen
+                elif args.embedding_mode == "conditioned":
+                    image_repr = out.z_ind
+                elif args.embedding_mode == "mixed":
+                    image_repr = out.z_gen + out.z_ind
+                else:
+                    image_repr = out.z_final
+            elif use_anatomy:
+                image_repr = qformer(
+                    feat_map, masks_fine, has_masks,
+                    suppress_mask=not args.use_masks,
+                )
+            else:
+                image_repr = qformer(feat_map)
+            img_lat = F.normalize(image_repr, dim=-1)
             txt_lat = _encode_text_latents(clip, tokenizer, list(texts), device, args.max_txt_len)
             img_latents.append(img_lat.float().cpu())
             txt_latents.append(txt_lat.float().cpu())
@@ -224,24 +281,33 @@ def main():
     print(f"{'text -> image':<22}" + "  ".join(f"{r_ti[f'R@{k}']:5.2f}" for k in KS) + f"  {mean_rank_ti:6.1f}")
     print(f"{'  + DSL':<22}" + "  ".join(f"{r_ti_dsl[f'R@{k}']:5.2f}" for k in KS))
 
-    print(f"[retrieval] computing {args.n_bootstrap} bootstrap resamples ...")
-    ci = _bootstrap_recall(img_lat.numpy(), txt_lat.numpy(), args.n_bootstrap, args.seed)
+    if args.n_bootstrap > 0:
+        print(f"[retrieval] computing {args.n_bootstrap} bootstrap resamples ...")
+        ci = _bootstrap_recall(img_lat.numpy(), txt_lat.numpy(), args.n_bootstrap, args.seed)
+    else:
+        print("[retrieval] bootstrap disabled")
+        ci = {"image_to_text": {}, "text_to_image": {}}
 
     print("[retrieval] computing I->I MeanJaccard@K (mps-ct convention) ...")
     labels = _load_label_vectors(accs_all, args.labels_csv)
     j_ii = _mean_jaccard_at_k(img_lat.numpy(), labels, KS_I2I)
-    j_ii_ci = _bootstrap_jaccard(img_lat.numpy(), labels, args.n_bootstrap, args.seed)
+    j_ii_ci = (_bootstrap_jaccard(img_lat.numpy(), labels, args.n_bootstrap, args.seed)
+               if args.n_bootstrap > 0 else {})
     print(f"{'image -> image':<22}" + "  ".join(f"{j_ii[f'Jaccard@{k}']:5.2f}" for k in KS_I2I))
 
     report = {
         "ckpt": args.ckpt,
         "n_samples": int(n),
         "n_bootstrap": int(args.n_bootstrap),
+        "embedding_mode": args.embedding_mode,
+        "mask_free": not args.use_masks,
         "bootstrap_unit": "scan",
         "image_to_text": {**r_it, "mean_rank": mean_rank_it,
-                          "ci": {k: {"lo": ci["image_to_text"][k][0], "hi": ci["image_to_text"][k][1]} for k in r_it}},
+                          "ci": {k: {"lo": ci["image_to_text"][k][0], "hi": ci["image_to_text"][k][1]}
+                                 for k in r_it if k in ci["image_to_text"]}},
         "text_to_image": {**r_ti, "mean_rank": mean_rank_ti,
-                          "ci": {k: {"lo": ci["text_to_image"][k][0], "hi": ci["text_to_image"][k][1]} for k in r_ti}},
+                          "ci": {k: {"lo": ci["text_to_image"][k][0], "hi": ci["text_to_image"][k][1]}
+                                 for k in r_ti if k in ci["text_to_image"]}},
         "dsl_temp": dsl_temp,
         "image_to_text_dsl": {**r_it_dsl, "note": "dual-softmax transductive test-time rerank"},
         "text_to_image_dsl": {**r_ti_dsl, "note": "dual-softmax transductive test-time rerank"},
@@ -266,18 +332,21 @@ def main():
         f.write(f"ckpt={args.ckpt}\nN={n}\n\n")
         f.write(f"{'Direction':<22}" + "  ".join(f"R@{k:>3}" for k in KS) + "  mean_rank\n")
         f.write(f"{'image -> text':<22}" + "  ".join(f"{r_it[f'R@{k}']:5.2f}" for k in KS) + f"  {mean_rank_it:6.1f}\n")
-        for k in KS:
-            lo, hi = ci["image_to_text"][f"R@{k}"]
-            f.write(f"  CI R@{k:<3}: [{lo:.2f}, {hi:.2f}]\n")
+        if args.n_bootstrap > 0:
+            for k in KS:
+                lo, hi = ci["image_to_text"][f"R@{k}"]
+                f.write(f"  CI R@{k:<3}: [{lo:.2f}, {hi:.2f}]\n")
         f.write(f"{'text -> image':<22}" + "  ".join(f"{r_ti[f'R@{k}']:5.2f}" for k in KS) + f"  {mean_rank_ti:6.1f}\n")
-        for k in KS:
-            lo, hi = ci["text_to_image"][f"R@{k}"]
-            f.write(f"  CI R@{k:<3}: [{lo:.2f}, {hi:.2f}]\n")
+        if args.n_bootstrap > 0:
+            for k in KS:
+                lo, hi = ci["text_to_image"][f"R@{k}"]
+                f.write(f"  CI R@{k:<3}: [{lo:.2f}, {hi:.2f}]\n")
         f.write(f"\n{'image -> image':<22}" + "  ".join(f"Jacc@{k:<3}" for k in KS_I2I) + "  (mps-ct convention)\n")
         f.write(f"{'mean Jaccard@K':<22}" + "  ".join(f"{j_ii[f'Jaccard@{k}']:7.2f}" for k in KS_I2I) + "\n")
-        for k in KS_I2I:
-            lo, hi = j_ii_ci[f"Jaccard@{k}"]
-            f.write(f"  CI Jaccard@{k:<3}: [{lo:.2f}, {hi:.2f}]\n")
+        if args.n_bootstrap > 0:
+            for k in KS_I2I:
+                lo, hi = j_ii_ci[f"Jaccard@{k}"]
+                f.write(f"  CI Jaccard@{k:<3}: [{lo:.2f}, {hi:.2f}]\n")
     print(f"[retrieval] saved {txt_path}")
 
 

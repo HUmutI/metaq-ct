@@ -80,6 +80,14 @@ groups:
       The rerun with beta_init -2, a 20x learning-rate multiplier on the zero-init
       context modules, and patience 8. This is the pass that picks the winner for
       the joint runs.
+  - id: ctx4
+    title: "Pathology-specific context read-out rescue (ctx4)"
+    note: >-
+      Pediatric-only exploratory rescue after ctx2. It reads the already
+      supervised class-specific conditioned pathology tokens directly, freezes
+      the inherited ARC-CT path, and learns zero-start per-class residual gates.
+      This is not the reserved ctx3 masked-joint experiment and is not a
+      replacement for the canonical C1+C2 Phase-1 result.
   - id: joint
     title: "Joint context runs (the headline)"
     note: >-
@@ -347,6 +355,7 @@ experiments:
     classes: 27
     masks: peds 100%
     runs: [ctx2_ct_only_seed0, ctx2_ct_only_seed1, ctx2_ct_only_seed2]
+    evals: [peds_ctx2/ct_only_seed0, peds_ctx2/ct_only_seed1, peds_ctx2/ct_only_seed2]
     patience: 8
     val_every: 400
     finding: >-
@@ -369,6 +378,7 @@ experiments:
     classes: 27
     masks: peds 100%
     runs: [ctx2_c1_xattn_seed0, ctx2_c1_xattn_seed1, ctx2_c1_xattn_seed2]
+    evals: [peds_ctx2/c1_xattn_seed0, peds_ctx2/c1_xattn_seed1, peds_ctx2/c1_xattn_seed2]
     patience: 8
     val_every: 400
   - id: ctx2/c1_full
@@ -378,6 +388,7 @@ experiments:
     classes: 27
     masks: peds 100%
     runs: [ctx2_c1_full_seed0, ctx2_c1_full_seed1, ctx2_c1_full_seed2]
+    evals: [peds_ctx2/c1_full_seed0, peds_ctx2/c1_full_seed1, peds_ctx2/c1_full_seed2]
     patience: 8
     val_every: 400
   - id: ctx2/c2
@@ -387,6 +398,7 @@ experiments:
     classes: 27
     masks: peds 100%
     runs: [ctx2_c2_seed0, ctx2_c2_seed1, ctx2_c2_seed2]
+    evals: [peds_ctx2/c2_seed0, peds_ctx2/c2_seed1, peds_ctx2/c2_seed2]
     patience: 8
     val_every: 400
     status: queued
@@ -397,6 +409,7 @@ experiments:
     classes: 27
     masks: peds 100%
     runs: [ctx2_fusion_gated_seed0, ctx2_fusion_gated_seed1, ctx2_fusion_gated_seed2]
+    evals: [peds_ctx2/fusion_gated_seed0, peds_ctx2/fusion_gated_seed1, peds_ctx2/fusion_gated_seed2]
     patience: 8
     val_every: 400
     status: queued
@@ -417,9 +430,105 @@ experiments:
     classes: 27
     masks: peds 100%
     runs: [ctx2_age_scalar_seed0, ctx2_age_scalar_seed1, ctx2_age_scalar_seed2]
+    evals: [peds_ctx2/age_scalar_seed0, peds_ctx2/age_scalar_seed0_ind_none,
+      peds_ctx2/age_scalar_seed0_ind_none_v2, peds_ctx2/age_scalar_seed0_ind_shuffled,
+      peds_ctx2/age_scalar_seed0_ind_shuffled_v2, peds_ctx2/age_scalar_seed0_smoke,
+      peds_ctx2/age_scalar_seed1, peds_ctx2/age_scalar_seed1_ind_none,
+      peds_ctx2/age_scalar_seed1_ind_none_v2, peds_ctx2/age_scalar_seed1_ind_shuffled,
+      peds_ctx2/age_scalar_seed1_ind_shuffled_v2, peds_ctx2/age_scalar_seed2,
+      peds_ctx2/age_scalar_seed2_ind_none, peds_ctx2/age_scalar_seed2_ind_none_v2,
+      peds_ctx2/age_scalar_seed2_ind_shuffled, peds_ctx2/age_scalar_seed2_ind_shuffled_v2]
     patience: 8
     val_every: 400
     status: queued
+
+  # --------------------------------------------------------- context ctx4 rescue
+  - id: ctx4/classlogit_c1_gatewarm
+    group: ctx4
+    arch: context
+    cohort: peds 7,001
+    classes: 27 (headline measurable 23)
+    masks: peds 100%
+    runs: [ctx4_classlogit_c1_gatewarm_seed0, ctx4_classlogit_c1_gatewarm_seed1, ctx4_classlogit_c1_gatewarm_seed2]
+    patience: 10
+    val_every: 200
+    status: queued
+    finding: >-
+      Exploratory direct R2 read-out. Conditioned pathology tokens train for 400
+      updates while their prediction gates remain exactly zero; only then may
+      they alter the frozen ARC-CT class margins.
+  - id: ctx4/classlogit_c2_gatewarm
+    group: ctx4
+    arch: context
+    cohort: peds 7,001
+    classes: 27 (headline measurable 23)
+    masks: peds 100%
+    runs: [ctx4_classlogit_c2_gatewarm_seed0, ctx4_classlogit_c2_gatewarm_seed1, ctx4_classlogit_c2_gatewarm_seed2]
+    patience: 10
+    val_every: 200
+    status: queued
+    finding: >-
+      The same direct R2 read-out with the documented non-suppressing C2
+      relevance mechanism active.
+  - id: ctx4/classlogit_c1_gatewarm_ind2
+    group: ctx4
+    arch: context
+    cohort: peds 7,001
+    classes: 27 (headline measurable 23)
+    masks: peds 100%
+    runs: [ctx4_classlogit_c1_gatewarm_ind2_seed0, ctx4_classlogit_c1_gatewarm_ind2_seed1, ctx4_classlogit_c1_gatewarm_ind2_seed2]
+    patience: 10
+    val_every: 200
+    status: queued
+    finding: >-
+      Controlled strength ablation: doubles conditioned-token supervision from
+      1.0 to 2.0 without forcing the zero-start prediction gates open.
+  - id: ctx4/classlogit_c2_gatewarm_safe
+    group: ctx4
+    arch: context
+    cohort: peds 7,001
+    classes: 27 (headline measurable 23)
+    masks: peds 100%
+    runs: [ctx4_classlogit_c2_gatewarm_safe_seed0, ctx4_classlogit_c2_gatewarm_safe_seed1, ctx4_classlogit_c2_gatewarm_safe_seed2]
+    patience: 10
+    val_every: 200
+    status: queued
+    finding: >-
+      Documentation-conformant safety control for the rescue read-out: C1+C2,
+      ordinal age bands, 30% indication dropout and prediction-level
+      counterfactual consistency. It separates a defensible metadata gain from
+      an efficacy-only gain obtained by removing shortcut controls.
+  - id: ctx4/smoke_trainedbase
+    group: ctx4
+    arch: context
+    cohort: peds smoke 40/32
+    classes: 27
+    masks: peds 100%
+    runs: [ctx4_smoke_classlogit_c1_trainedbase_smoke_seed0]
+    patience: 0
+    val_every: 2
+    finding: >-
+      Two-update integration test using the trained seed-0 CT-only checkpoint;
+      completed at 0.8133 on a non-reportable 32-volume smoke subset.
+  - id: ctx4/pilots_invalid
+    group: ctx4
+    arch: context
+    cohort: peds 7,001
+    classes: 27
+    masks: peds 100%
+    runs: [ctx3_classlogit_c1_gatewarm_seed0, ctx3_classlogit_c1_gatewarm_seed1,
+      ctx3_classlogit_c1_gatewarm_seed2, ctx3_classlogit_c1_seed0,
+      ctx3_classlogit_c1_seed1, ctx3_classlogit_c1_seed2,
+      ctx3_classlogit_c2_gatewarm_seed0, ctx3_classlogit_c2_gatewarm_seed1,
+      ctx3_classlogit_c2_seed0, ctx3_classlogit_c2_seed1,
+      ctx3_classlogit_c2_seed2, ctx3_smoke_classlogit_c1_gatewarm_smoke_seed0,
+      ctx3_smoke_classlogit_c1_seed0]
+    patience: 10
+    val_every: 200
+    finding: >-
+      Invalid/smoke artifacts retained for audit only. They are not result runs:
+      the first pilot opened gates before token warmup, and the ctx3 prefix
+      conflicted with the reserved masked-joint generation.
 
   # --------------------------------------------------------------- joint
   - id: joint/ct_only
@@ -456,6 +565,7 @@ experiments:
     classes: 18 (published)
     masks: CT-RATE, gated at 99%
     runs: [ctrate_ct_only_seed0, ctrate_ct_only_seed1, ctrate_ct_only_seed2]
+    evals: [ctrate18/ct_only_seed0, ctrate18/ct_only_seed1, ctrate18/ct_only_seed2]
     patience: 4
     val_every: 1200
     status: queued
@@ -469,6 +579,7 @@ experiments:
     classes: 18 (published)
     masks: CT-RATE, gated at 99%
     runs: [ctrate_c2_seed0, ctrate_c2_seed1, ctrate_c2_seed2]
+    evals: [ctrate18/c2_seed0, ctrate18/c2_seed0_smoke, ctrate18/c2_seed1, ctrate18/c2_seed2]
     patience: 4
     val_every: 1200
     status: queued
@@ -525,6 +636,19 @@ experiments:
       fitted to a subsample selected by acquisition order.
 
 journal:
+  - date: 2026-08-31
+    title: Direct class read-out rescue requires staged gates and its own generation
+    text: >-
+      A pathology-specific class-logit pilot opened zero-start prediction gates
+      while the conditioned tokens were still learning, collapsing update-200
+      validation AUC to about 0.732. A 400-update token-only phase now holds the
+      gates exactly closed. The rescue was renamed ctx4 because ctx3 is reserved
+      for the documented masked joint ablation. It remains exploratory: the
+      original launcher also froze arcct_seed0.peds27.pt, which is the schema-
+      surgery starting point (about 0.731 AUC), rather than a trained pediatric
+      baseline. The corrected launcher now warm-starts each arm from the
+      seed-matched ctx2/ct_only best checkpoint. The pediatric headline is
+      measurable-23 rather than all 27 classes.
   - date: 2026-08-28
     title: A sync loop emptied the context config, and the identity gate passed anyway
     text: >-

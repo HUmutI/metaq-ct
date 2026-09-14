@@ -1,0 +1,19 @@
+% Auto-generated age-factorial result.
+\subsection{20:00 checkpoint snapshot: does excluding ages 0--5 help?}
+\begin{table}[t]
+\centering
+\caption{Interim 20:00 age-training checkpoint snapshot evaluated on the identical 5--$<18$ MRN-disjoint test subset.}
+\label{tab:peds-age-factorial-snapshot}
+\begin{tabular}{@{}llrr@{}}
+\toprule
+Model & Training ages & AUROC & AUPRC \\
+\midrule
+CT-only & 0--$<18$ & 0.7656 & 0.3573 \\
+CT-only & 5--$<18$ & 0.7907 & 0.4110 \\
+Full & 0--$<18$ & 0.8287 & 0.4689 \\
+Full & 5--$<18$ & 0.8212 & 0.4503 \\
+\bottomrule
+\end{tabular}
+\parbox{\columnwidth}{\footnotesize CT-only: excluding ages 0--5 changes AUROC by +0.0250 (patient-bootstrap 95\% CI [0.0154, 0.0344]).}
+\parbox{\columnwidth}{\footnotesize Full: excluding ages 0--5 changes AUROC by -0.0075 (patient-bootstrap 95\% CI [-0.0136, -0.0008]).}
+\end{table}

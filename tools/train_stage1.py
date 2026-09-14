@@ -31,12 +31,12 @@ from arcct.image_encoder import RACImageEncoder  # noqa: E402
 
 
 DATA_ROOT = os.environ.get("RAC_DATA_ROOT", "/mnt/amax5_drive/alp_ozaydin_0/data")
-DATA_TRAIN = f"{DATA_ROOT}/mps_ct_npz/train"
-DATA_VALID = f"{DATA_ROOT}/mps_ct_npz/valid"
+DATA_TRAIN = os.environ.get("RAC_DATA_TRAIN", f"{DATA_ROOT}/mps_ct_npz/train")
+DATA_VALID = os.environ.get("RAC_DATA_VALID", f"{DATA_ROOT}/mps_ct_npz/valid")
 MASK_TRAIN = os.environ.get("RAC_MASK_TRAIN", "/mnt/amax2_drive/alp_ozaydin_0/data/fine_train_masks_192")
 MASK_VALID = os.environ.get("RAC_MASK_VALID", "/mnt/amax2_drive/alp_ozaydin_0/data/fine_valid_masks_192")
-REPORTS_TRAIN = f"{DATA_ROOT}/ct_reports/train_reports.csv"
-REPORTS_VALID = f"{DATA_ROOT}/ct_reports/valid_reports.csv"
+REPORTS_TRAIN = os.environ.get("RAC_REPORTS_TRAIN", f"{DATA_ROOT}/ct_reports/train_reports.csv")
+REPORTS_VALID = os.environ.get("RAC_REPORTS_VALID", f"{DATA_ROOT}/ct_reports/valid_reports.csv")
 LABELS_TRAIN = os.environ.get("RAC_LABELS_TRAIN", f"{DATA_ROOT}/multi_abnormality_labels/train_predicted_labels.csv")
 LABELS_VALID = os.environ.get("RAC_LABELS_VALID", f"{DATA_ROOT}/multi_abnormality_labels/valid_predicted_labels.csv")
 RESULTS_DIR = os.environ.get("RAC_STAGE1_RESULTS_DIR", f"{HERE}/runs/stage1_seed{os.environ.get('RAC_SEED', '0')}")
@@ -154,7 +154,8 @@ def main():
     os.makedirs(RESULTS_DIR, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[stage1] device={device} results_dir={RESULTS_DIR}")
-    print(f"[stage1] epochs={EPOCHS} batch={BATCH_SIZE} lr={LR} loss={LOSS_NAME}")
+    print(f"[stage1] arch={os.environ.get('RAC_R3D_ARCH', 'r3d_18')} "
+          f"epochs={EPOCHS} batch={BATCH_SIZE} lr={LR} loss={LOSS_NAME}")
 
     train_ds = RACDatasetV4(
         DATA_TRAIN,
@@ -164,6 +165,8 @@ def main():
         is_train=True,
         limit=TRAIN_LIMIT,
         fail_fast=FAIL_FAST,
+        volume_list_path=os.environ.get("RAC_VOLUME_LIST_TRAIN", ""),
+        volume_exclude_path=os.environ.get("RAC_VOLUME_EXCLUDE", ""),
     )
     val_ds = RACDatasetV4(
         DATA_VALID,
@@ -173,6 +176,8 @@ def main():
         is_train=False,
         limit=VAL_LIMIT,
         fail_fast=FAIL_FAST,
+        volume_list_path=os.environ.get("RAC_VOLUME_LIST_VALID", ""),
+        volume_exclude_path=os.environ.get("RAC_VOLUME_EXCLUDE", ""),
     )
     train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=rac_collate, drop_last=True, pin_memory=True, persistent_workers=NUM_WORKERS > 0, **_loader_kwargs())
     val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, collate_fn=rac_collate, pin_memory=True, **_loader_kwargs())
@@ -230,7 +235,10 @@ def main():
             "epoch": epoch,
             "best_auc": max(best_auc, mean_auc),
             "per_auc": per_auc,
-            "config": {"epochs": EPOCHS, "batch_size": BATCH_SIZE, "lr": LR, "loss": LOSS_NAME},
+            "config": {"epochs": EPOCHS, "batch_size": BATCH_SIZE, "lr": LR,
+                       "loss": LOSS_NAME,
+                       "arch": os.environ.get("RAC_R3D_ARCH", "r3d_18"),
+                       "schema": os.environ.get("RAC_SCHEMA", "ctrate")},
         }
         torch.save(pkg, f"{RESULTS_DIR}/stage1_epoch{epoch}.pt")
         if mean_auc > best_auc:

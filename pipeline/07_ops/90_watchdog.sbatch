@@ -6,6 +6,7 @@
 #SBATCH --mem=8G
 #SBATCH --output=/temp_work/ch278233/ts_logs/watchdog_%j.out
 set -uo pipefail
+export ARCCT_ROOT=${ARCCT_ROOT:-$HOME/bch-arc-ct}
 # Runs as a SLURM job so it outlives any login session, VPN drop or laptop.
 # Re-submits itself before the 2-day wall clock so the watch never lapses.
 LOG=/temp_work/ch278233/WATCHDOG.log

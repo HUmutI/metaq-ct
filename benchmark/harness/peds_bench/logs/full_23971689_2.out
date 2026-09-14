@@ -1,0 +1,55 @@
+NVIDIA L40
+[ckpt] tensors in checkpoint : 367
+[ckpt] tensors in model      : 369
+[ckpt] MATCHED & LOADED      : 364
+[ckpt] shape mismatches      : 0 []
+[ckpt] unexpected (ckpt only): 3 ['image_queue', 'text_queue', 'queue_ptr']
+[ckpt] missing  (model only) : 5 ['text_encoder.cls.predictions.bias', 'text_encoder.cls.predictions.transform.dense.weight', 'text_encoder.cls.predictions.transform.dense.bias', 'text_encoder.cls.predictions.transform.LayerNorm.weight', 'text_encoder.cls.predictions.transform.LayerNorm.bias']
+[ckpt]   of which visual_encoder=149 text_encoder=199 heads=16
+[ckpt] temp=0.087654  organs=['lung', 'heart', 'esophagus', 'aorta']
+CKPT_INFO {"n_ckpt": 367, "n_model": 369, "matched": 364}
+text prototypes: 23 (official=12 extrapolated=11)
+shard 2: 377 volumes to score
+[2] 0/377 5s (5.17s/vol)
+[2] 10/377 50s (4.50s/vol)
+[2] 20/377 86s (4.11s/vol)
+[2] 30/377 107s (3.45s/vol)
+[2] 40/377 140s (3.41s/vol)
+[2] 50/377 179s (3.52s/vol)
+[2] 60/377 200s (3.29s/vol)
+[2] 70/377 234s (3.30s/vol)
+Mask id: 0 Rank: 0 Incomplete lung 0.9999120796390581
+[2] 80/377 280s (3.46s/vol)
+[2] 90/377 304s (3.34s/vol)
+[2] 100/377 340s (3.36s/vol)
+[2] 110/377 385s (3.47s/vol)
+[2] 120/377 409s (3.38s/vol)
+Mask id: 0 Rank: 0 Incomplete lung 0.9999953191172323
+[2] 130/377 447s (3.41s/vol)
+[2] 140/377 472s (3.35s/vol)
+[2] 150/377 493s (3.26s/vol)
+[2] 160/377 523s (3.25s/vol)
+[2] 170/377 549s (3.21s/vol)
+[2] 180/377 569s (3.15s/vol)
+[2] 190/377 603s (3.16s/vol)
+[2] 200/377 637s (3.17s/vol)
+Mask id: 0 Rank: 0 Incomplete lung 0.9999870368582351
+Mask id: 0 Rank: 0 Incomplete heart 0.9992848138091543
+[2] 210/377 655s (3.10s/vol)
+[2] 220/377 700s (3.17s/vol)
+[2] 230/377 739s (3.20s/vol)
+[2] 240/377 751s (3.12s/vol)
+[2] 250/377 790s (3.15s/vol)
+[2] 260/377 838s (3.21s/vol)
+[2] 270/377 864s (3.19s/vol)
+[2] 280/377 906s (3.22s/vol)
+[2] 290/377 945s (3.25s/vol)
+[2] 300/377 968s (3.22s/vol)
+[2] 310/377 999s (3.21s/vol)
+[2] 320/377 1046s (3.26s/vol)
+[2] 330/377 1060s (3.20s/vol)
+[2] 340/377 1099s (3.22s/vol)
+[2] 350/377 1124s (3.20s/vol)
+[2] 360/377 1165s (3.23s/vol)
+[2] 370/377 1182s (3.19s/vol)
+SHARD_DONE 2

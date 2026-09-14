@@ -1,0 +1,39 @@
+\subsection{Interim recovery results from preserved checkpoints}
+The September 11 training wave was interrupted by a storage-quota error after
+its first one or two validation boundaries.  Table~\ref{tab:peds-recovery}
+reports frozen-test point estimates from the atomically saved checkpoints while
+training resumes.  These values are useful early evidence, but they are not
+substitutes for the preregistered completed-training comparison and confidence
+intervals.  In particular, the age-$\geq5$ CT-only seed 2 checkpoint was not
+written before the interruption.
+
+\begin{table*}[t]
+\centering
+\caption{Interim 23-label pediatric frozen-test macro AUROC from preserved
+checkpoints.  Full denotes the metadata-conditioned prompt branch; general is
+the metadata-independent branch from the same full-model checkpoint.}
+\label{tab:peds-recovery}
+\begin{tabular}{@{}llrrrrl@{}}
+\toprule
+Cohort / architecture & Readout & Seed 0 & Seed 1 & Seed 2 & Mean & Qualification \\
+\midrule
+All age $<18$, R(2+1)D-18 & Full conditioned & 0.8210 & 0.8086 & 0.7994 & 0.8097 & updates 500--1000 \\
+All age $<18$, R(2+1)D-18 & General branch & 0.7903 & 0.7726 & 0.7701 & 0.7777 & same checkpoints \\
+All age $<18$, R(2+1)D-18 & Within-checkpoint $\Delta$ & +0.0307 & +0.0360 & +0.0293 & \best{+0.0320} & conditioned--general \\
+\midrule
+Age $\geq5$, R(2+1)D-18 & Full conditioned & 0.8295 & 0.8165 & 0.8121 & 0.8194 & updates 500--1000 \\
+Age $\geq5$, R(2+1)D-18 & CT-only & 0.7873 & 0.7693 & --- & 0.7783 & two seeds available \\
+Age $\geq5$, R(2+1)D-18 & Matched $\Delta$ & +0.0422 & +0.0472 & --- & \best{+0.0447} & paired two-seed mean \\
+\midrule
+All age $<18$, R3D-18 & Full conditioned & 0.8044 & --- & --- & 0.8044 & update 1000 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+Patient-level 1,000-replicate bootstrap intervals for the all-age conditioned
+AUROC are [0.8070, 0.8333], [0.7933, 0.8229], and [0.7838, 0.8133] for seeds
+0--2.  The corresponding age-$\geq5$ intervals are [0.8149, 0.8420],
+[0.8013, 0.8310], and [0.7958, 0.8271].  For the two available age-$\geq5$
+CT-only controls they are [0.7691, 0.8041] and [0.7512, 0.7860].  Mean AUPRC
+is 0.4380 for the all-age conditioned checkpoints, 0.4442 for the age-$\geq5$
+conditioned checkpoints, and 0.3760 for the two age-$\geq5$ CT-only controls.

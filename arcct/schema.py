@@ -2,7 +2,9 @@
 
 Two schemas live here so the pediatric work cannot disturb the adult numbers.
 `ctrate` is the frozen 18-label / 10-region set every released checkpoint was
-trained on; `peds` is the 27-label / 10-region set for the pediatric adaptation.
+trained on; `peds` is the 27-label / 10-region set for the pediatric adaptation;
+`peds23` is the prospectively defined pediatric-only task that removes the four
+adult-specific / inadequately supported classes from both training and scoring.
 Default is `ctrate`, so a checkout with no env set behaves exactly as before.
 
 Why 27 and not 23. Dropping the four classes that are near-absent in children
@@ -47,6 +49,14 @@ PEDS_PATHOLOGIES = CTRATE_PATHOLOGIES + [
     "Bone lesion or fracture",
     "Pneumothorax",
 ]
+
+PEDS23_EXCLUDED = {
+    "Arterial wall calcification",
+    "Coronary artery wall calcification",
+    "Hiatal hernia",
+    "Emphysema",
+}
+PEDS23_PATHOLOGIES = [p for p in PEDS_PATHOLOGIES if p not in PEDS23_EXCLUDED]
 
 CTRATE_FINE_LABEL_NAMES = {
     0: "background", 1: "lung_upper_lobe_left", 2: "lung_lower_lobe_left",
@@ -143,8 +153,18 @@ def active() -> dict:
             "PATHOLOGY_FINE_ORGANS": {k: list(v) for k, v in PEDS_PATHOLOGY_FINE_ORGANS.items()},
             "REGION_KEYWORDS": {k: list(v) for k, v in PEDS_REGION_KEYWORDS.items()},
         }
+    if name == "peds23":
+        return {
+            "name": "peds23",
+            "PATHOLOGIES": list(PEDS23_PATHOLOGIES),
+            "FINE_LABEL_NAMES": dict(PEDS_FINE_LABEL_NAMES),
+            "PATHOLOGY_FINE_ORGANS": {
+                k: list(PEDS_PATHOLOGY_FINE_ORGANS[k]) for k in PEDS23_PATHOLOGIES
+            },
+            "REGION_KEYWORDS": {k: list(v) for k, v in PEDS_REGION_KEYWORDS.items()},
+        }
     if name != "ctrate":
-        raise ValueError("RAC_SCHEMA must be 'ctrate' or 'peds', got %r" % name)
+        raise ValueError("RAC_SCHEMA must be 'ctrate', 'peds', or 'peds23', got %r" % name)
     return {
         "name": "ctrate",
         "PATHOLOGIES": list(CTRATE_PATHOLOGIES),

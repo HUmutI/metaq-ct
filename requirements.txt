@@ -9,3 +9,4 @@ scikit-learn>=1.3
 scipy>=1.11
 monai==1.4.0
 tqdm>=4.66
+matplotlib>=3.8,<4
