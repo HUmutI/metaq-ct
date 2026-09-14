@@ -1,2 +1,0 @@
-/temp_work/ch278233/PEDS_BENCH/fvlm/_venv/lib/python3.11/site-packages/timm/models/hub.py:4: FutureWarning: Importing from timm.models.hub is deprecated, please import via timm.models
-  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.models", FutureWarning)

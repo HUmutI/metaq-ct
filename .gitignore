@@ -9,3 +9,7 @@ pipeline/pipeline_figures/*.png
 # code: it belongs on /temp_work with the other mask trees, and a symlink keeps
 # the path that was used to move it working.
 ct-rate-train-masks
+
+# Per-study model dumps. qc_*.jsonl carried real accession numbers, and the
+# prediction dumps are regenerable output, not source.
+*.jsonl
