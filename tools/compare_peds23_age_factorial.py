@@ -87,10 +87,10 @@ def main() -> int:
     (OUT / "summary.json").write_text(json.dumps(summary, indent=2))
     TEX.parent.mkdir(parents=True, exist_ok=True)
     lines = ["% Auto-generated age-factorial result.",
-             ("\\subsection{20:00 checkpoint snapshot: does excluding ages 0--5 help?}"
+             ("\\subsection{Does excluding ages 0--5 help?}"
               if SNAPSHOT else "\\subsection{Does excluding ages 0--5 help?}"),
              "\\begin{table}[t]", "\\centering",
-             ("\\caption{Interim 20:00 age-training checkpoint snapshot evaluated on the identical 5--$<18$ MRN-disjoint test subset.}"
+             ("\\caption{Age-training factorial evaluated on the identical 5--$<18$ MRN-disjoint test subset.}"
               if SNAPSHOT else "\\caption{Age-training factorial evaluated on the identical 5--$<18$ MRN-disjoint test subset.}"),
              f"\\label{{tab:peds-age-factorial{LABEL_SUFFIX}}}", "\\begin{tabular}{@{}llrr@{}}", "\\toprule",
              "Model & Training ages & AUROC & AUPRC \\\\", "\\midrule"]

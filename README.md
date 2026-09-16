@@ -108,9 +108,13 @@ Two, and they cannot be merged: `arcct` (torch 2.4.1, numpy 1.x, monai) for
 everything except masks, and `totalseg` (numpy 2.x) for segmentation only.
 TotalSegmentator requires numpy 2.x, which breaks torch's numpy 1.x C ABI.
 
-## Known divergence
+## The two pipeline trees
 
-`pipeline/` in this repository and `~/pipeline` on the cluster have drifted
-apart, 65 files differ. Both trees are in use by running jobs. They are not
-merged here, because silently reconciling them would change what a queued job
-executes.
+`pipeline/` here and `~/pipeline` on the cluster are now reconciled: every file
+present in both is identical. This repository is the superset and the
+authoritative copy. It carries 48 scripts the cluster tree does not have, which
+is the newer work.
+
+The cluster tree keeps three files that must never be committed, the report
+spreadsheet and its two label derivatives under `pipeline/lib/ctrate_map/`.
+They contain verbatim patient report text and stay on the cluster.

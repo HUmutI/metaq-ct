@@ -79,10 +79,10 @@ def main() -> int:
     comparison = json.loads((EVAL / "paper_summary/core_comparison.json").read_text())
     lines = [
         "% Auto-generated from audited prediction artifacts; do not edit by hand.",
-        ("\\subsection{20:00 true-pediatric checkpoint snapshot}"
+        ("\\subsection{Frozen true-pediatric ($<18$) results}"
          if SNAPSHOT else "\\subsection{Frozen true-pediatric ($<18$) results}"),
         "\\begin{table}[t]", "\\centering",
-        ("\\caption{Interim 20:00 checkpoint snapshot on the MRN-disjoint $<18$ test split; training continued after evaluation.}"
+        ("\\caption{Three-seed primary comparison on the MRN-disjoint $<18$ test split.}"
          if SNAPSHOT else "\\caption{Three-seed primary comparison on the MRN-disjoint $<18$ test split.}"),
         f"\\label{{tab:u18-primary{LABEL_SUFFIX}}}", "\\begin{tabular}{@{}lrrr@{}}", "\\toprule",
         "Seed & CT-only AUROC & Full AUROC & $\\Delta$ \\\\", "\\midrule",
@@ -99,7 +99,7 @@ def main() -> int:
         f'\\parbox{{\\columnwidth}}{{\\footnotesize Patient-bootstrap 95\\% CI for the mean paired AUROC difference: [{lo:.4f}, {hi:.4f}]; two-sided paired bootstrap ${p_text}$.}}',
         "\\end{table}",
         "\\begin{table*}[t]", "\\centering",
-        ("\\caption{Audited completed $<18$ checkpoint-snapshot and follow-up ablations. Arms without a completed frozen-test evaluation are omitted.}"
+        ("\\caption{Audited $<18$ ablations. Arms without a completed frozen-test evaluation are omitted.}"
          if SNAPSHOT else "\\caption{Complete frozen $<18$ architecture ablation. Every row uses the same train/development/test split.}"),
         f"\\label{{tab:u18-ablation{LABEL_SUFFIX}}}", "\\begin{tabular}{@{}lrrlll@{}}", "\\toprule",
         "Arm & AUROC & AUPRC & Brier & ECE & Sens.@95\\% spec. \\\\", "\\midrule",

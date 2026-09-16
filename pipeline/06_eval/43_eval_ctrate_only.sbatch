@@ -52,7 +52,8 @@ export RAC_MASK_VALID=${CTMASK:-/temp_work/ch278233/CTRATE_MASKS10_192/valid_nes
 export EVAL_BATCH_SIZE=8
 export EVAL_NUM_WORKERS=3
 export EVAL_CKPT=$CKPT
-export EVAL_RESULTS_DIR=/temp_work/ch278233/eval_matrix/ctrate18/${RUNG}_seed${SEED}
+EVAL_RESULTS_ROOT=${EVAL_RESULTS_ROOT:-/temp_work/ch278233/eval_matrix/ctrate18}
+export EVAL_RESULTS_DIR=${EVAL_RESULTS_ROOT}/${RUNG}_seed${SEED}${EVAL_TAG_SUFFIX:-}
 mkdir -p "$EVAL_RESULTS_DIR"
 
 echo "=== EVAL rung=$RUNG seed=$SEED  $(date) ==="

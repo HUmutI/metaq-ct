@@ -71,7 +71,13 @@ def main() -> int:
         paths = paths[:a.limit]
     print("[resample] %d volumes -> %s" % (len(paths), a.out_dir))
     for i, p in enumerate(paths):
-        stem = os.path.basename(p)[:-4]
+        # ".nii" for the BCH pull (unchanged), ".nii.gz" for the external
+        # Pediatric-CT-SEG pull, which dcm2niix writes compressed.
+        stem = os.path.basename(p)
+        for ext in (".nii.gz", ".nii"):
+            if stem.endswith(ext):
+                stem = stem[:-len(ext)]
+                break
         dst = os.path.join(a.out_dir, stem + ".nii.gz")
         if os.path.exists(dst) and os.path.getsize(dst) > 0:
             continue
